@@ -1,6 +1,6 @@
 # Homebrew Tap Setup for Macolint
 
-## Quick Install Command
+## Quick Install Command (After Tap is Set Up)
 
 ```bash
 brew tap p4puniya/macolint && brew install macolint
@@ -9,6 +9,20 @@ brew tap p4puniya/macolint && brew install macolint
 That's it! After running this command, you can use `snip` anywhere in your terminal.
 
 ## Setting Up the Homebrew Tap (For Repository Maintainer)
+
+**⚠️ IMPORTANT:** You need to create the `homebrew-macolint` repository on GitHub first!
+
+### Quick Setup (Automated)
+
+Run the setup script from the macolint project root:
+
+```bash
+./scripts/setup-homebrew-tap.sh
+```
+
+This will guide you through the process.
+
+### Manual Setup
 
 To make Macolint installable via Homebrew, you need to create a Homebrew tap repository:
 
