@@ -25,9 +25,9 @@ pub fn get_snippet(config: &Config, name: Option<String>) -> Result<()> {
 
     // Copy to clipboard
     let mut ctx: ClipboardContext = ClipboardProvider::new()
-        .context("Failed to initialize clipboard")?;
+        .map_err(|e| anyhow::anyhow!("Failed to initialize clipboard: {}", e))?;
     ctx.set_contents(plaintext.clone())
-        .context("Failed to write to clipboard")?;
+        .map_err(|e| anyhow::anyhow!("Failed to write to clipboard: {}", e))?;
 
     println!("✓ Copied to clipboard: {}", snippet_name);
     Ok(())

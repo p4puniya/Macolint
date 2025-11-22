@@ -9,9 +9,9 @@ pub fn save_snippet(config: &Config, name: String, content: Option<String>) -> R
         None => {
             // Read from clipboard
             let mut ctx: ClipboardContext = ClipboardProvider::new()
-                .context("Failed to initialize clipboard")?;
+                .map_err(|e| anyhow::anyhow!("Failed to initialize clipboard: {}", e))?;
             ctx.get_contents()
-                .context("Failed to read from clipboard")?
+                .map_err(|e| anyhow::anyhow!("Failed to read from clipboard: {}", e))?
         }
     };
 

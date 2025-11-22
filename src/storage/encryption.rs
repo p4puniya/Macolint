@@ -33,7 +33,7 @@ impl Encryption {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, plaintext.as_bytes())
-            .context("Encryption failed")?;
+            .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
         
         // Combine nonce and ciphertext: nonce (12 bytes) + ciphertext
         let mut combined = nonce.to_vec();
@@ -58,7 +58,7 @@ impl Encryption {
         let plaintext = self
             .cipher
             .decrypt(nonce, ciphertext)
-            .context("Decryption failed")?;
+            .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))?;
         
         String::from_utf8(plaintext).context("Decrypted data is not valid UTF-8")
     }
