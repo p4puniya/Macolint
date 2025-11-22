@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.schema.2.0
+PackageIdentifier: Macolint.Macolint
+PackageVersion: 0.1.0
+PackageName: Macolint
+Publisher: Macolint Team
+PublisherUrl: https://github.com/<user>/macolint
+PublisherSupportUrl: https://github.com/<user>/macolint/issues
+License: MIT
+LicenseUrl: https://github.com/<user>/macolint/blob/main/LICENSE
+Copyright: Copyright (c) Macolint Team
+CopyrightUrl: https://github.com/<user>/macolint
+ShortDescription: A terminal-first snippet manager with encrypted local storage
+Description: Macolint is a terminal-first snippet manager that allows you to save, search, and retrieve code snippets directly from the terminal with encrypted local storage.
+Tags:
+  - snippet
+  - clipboard
+  - cli
+  - terminal
+  - encryption
+  - productivity
+Commands:
+  - snip
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/<user>/macolint/releases/download/v0.1.0/macolint-x86_64-pc-windows-msvc.zip
+    InstallerSha256: ""
+ManifestType: singleton
+ManifestVersion: 1.5.0
+

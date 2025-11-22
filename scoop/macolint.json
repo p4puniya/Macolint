@@ -1,0 +1,24 @@
+{
+  "version": "0.1.0",
+  "description": "A terminal-first snippet manager with encrypted local storage",
+  "homepage": "https://github.com/<user>/macolint",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/<user>/macolint/releases/download/v0.1.0/macolint-x86_64-pc-windows-msvc.zip",
+      "hash": "",
+      "bin": "snip.exe"
+    }
+  },
+  "checkver": {
+    "github": "https://github.com/<user>/macolint"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/<user>/macolint/releases/download/v$version/macolint-x86_64-pc-windows-msvc.zip"
+      }
+    }
+  }
+}
+

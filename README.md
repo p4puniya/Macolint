@@ -6,6 +6,43 @@ A terminal-first snippet manager with encrypted local storage.
 
 This is the initial local-only version demonstrating the core concept: save, search, and retrieve code snippets directly from the terminal.
 
+## Installation
+
+### Quick Install (Recommended)
+
+Choose the method that works best for your platform:
+
+**macOS / Linux (Homebrew)**
+```bash
+brew tap p4puniya/macolint && brew install macolint
+```
+
+**Windows (Scoop)**
+```powershell
+scoop install macolint
+```
+
+**Windows (Winget)**
+```powershell
+winget install Macolint.Macolint
+```
+
+**Arch Linux (AUR)**
+```bash
+yay -S macolint
+# or
+paru -S macolint
+```
+
+**Cargo Install (Cross-platform, requires Rust)**
+```bash
+cargo install macolint
+```
+
+### Other Installation Methods
+
+For detailed installation instructions including manual installation, building from source, and troubleshooting, see [INSTALL.md](dist/INSTALL.md).
+
 ## Features
 
 - **Save snippets**: From clipboard or explicit content
@@ -14,14 +51,9 @@ This is the initial local-only version demonstrating the core concept: save, sea
 - **Encrypted storage**: AES-256-GCM encryption for all snippet content
 - **Fuzzy search**: Uses `fzf` if available, falls back to interactive search
 
-## Installation
+### Build from Source
 
-### Prerequisites
-
-- Rust (latest stable version)
-- `fzf` (optional, but recommended for better search experience)
-
-### Build and Install
+If you prefer to build from source:
 
 ```bash
 # Clone the repository
@@ -39,6 +71,10 @@ cp target/release/snip ~/.local/bin/
 ```
 
 Make sure `~/.local/bin` (or your chosen install directory) is in your PATH.
+
+**Prerequisites for building from source:**
+- Rust (latest stable version)
+- `fzf` (optional, but recommended for better search experience)
 
 ## Usage
 

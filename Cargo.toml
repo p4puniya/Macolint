@@ -5,6 +5,12 @@ edition = "2021"
 description = "A terminal-first snippet manager with encrypted local storage"
 authors = ["Macolint Team"]
 license = "MIT"
+repository = "https://github.com/p4puniya/macolint"
+homepage = "https://github.com/p4puniya/macolint"
+documentation = "https://github.com/p4puniya/macolint#readme"
+keywords = ["snippet", "clipboard", "cli", "terminal", "encryption", "productivity"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
