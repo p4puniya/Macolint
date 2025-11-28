@@ -1,0 +1,78 @@
+Metadata-Version: 2.4
+Name: macolint
+Version: 0.1.0
+Summary: A cloud-synced terminal snippet manager
+Author: Macolint Team
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.0.0
+Requires-Dist: prompt-toolkit>=3.0.0
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: keyring>=24.0.0
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# Macolint
+
+A cloud-synced terminal snippet manager that helps developers reuse code faster across machines and teams.
+
+## Features
+
+- Save and retrieve code snippets instantly
+- Interactive fuzzy search with tab completion
+- Encrypted local storage
+- Fast CLI interface
+
+## Installation
+
+```bash
+pip3 install -e .
+# or
+python3 -m pip install -e .
+```
+
+**Note:** After installation, if `snip` command is not found, you have a few options:
+
+1. **Add Python's bin directory to PATH** (recommended):
+   ```bash
+   export PATH="/Library/Frameworks/Python.framework/Versions/3.12/bin:$PATH"
+   ```
+   Add this to your `~/.zshrc` to make it permanent.
+
+2. **Use the full path**:
+   ```bash
+   /Library/Frameworks/Python.framework/Versions/3.12/bin/snip [command]
+   ```
+
+3. **Use Python module syntax**:
+   ```bash
+   python3 -m macolint.cli [command]
+   ```
+
+## Usage
+
+```bash
+snip save <name>          # Save a snippet
+snip get [name]           # Retrieve a snippet
+snip update [name]        # Update a snippet
+snip delete [name]        # Delete a snippet
+snip list [keyword]       # List all snippets
+```
+
+## MVP Status
+
+Currently supports local storage with encryption. Cloud sync and team sharing coming in Phase 2.
+
