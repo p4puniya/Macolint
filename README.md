@@ -56,15 +56,43 @@ snip doctor
 ## Usage
 
 ```bash
-snip save <name>          # Save a snippet
-snip get [name]           # Retrieve a snippet
-snip update [name]        # Update a snippet
+snip save <name>          # Save a snippet (supports paths like module1/module2/snippet)
+snip save -m <module>     # Create an empty module path (e.g. module1/module2)
+snip get [name]           # Retrieve a snippet (paths work here too)
+snip get -m [module]      # Open interactive module browser (folder-style navigation)
+snip update [name]        # Update snippet content
+snip rename <old> <new>   # Rename a snippet
+snip rename -m <old> <new> # Rename a module
 snip delete [name]        # Delete a snippet
-snip list [keyword]       # List all snippets
-snip setup                 # Automatically set up shell wrapper (recommended!)
-snip setup --fix-path      # Also fix PATH if snip command not found
-snip doctor                # Diagnose installation issues
+snip delete -m <module>   # Delete a module and all its contents
+snip list [keyword]       # List modules and snippets at root level
+snip list -m <module>     # List contents of a specific module
+snip setup                # Automatically set up shell wrapper (recommended!)
+snip setup --fix-path     # Also fix PATH if snip command not found
+snip doctor               # Diagnose installation issues
 ```
+
+### Module examples
+
+- Save inside a nested module:
+  - `snip save git/commit/template`
+  - `snip save` (interactive: browse modules and select location)
+- Fetch directly by path:
+  - `snip get git/commit/template`
+- Browse within modules:
+  - `snip get -m` (start at root)
+  - `snip get -m git` (start inside `git`)
+  - Select entries ending with `/` to enter sub-modules.
+  - Press `Esc` to go up one level, or exit when at the root.
+- List module contents:
+  - `snip list` (shows root level: modules with `/` and top-level snippets)
+  - `snip list -m module1` (shows contents of `module1`)
+  - `snip list -m module1/module2` (shows contents of nested module)
+- Rename snippets and modules:
+  - `snip rename old_name new_name` (rename snippet)
+  - `snip rename module1/snippet new_name` (rename snippet in module)
+  - `snip rename -m module1 module2` (rename module)
+  - `snip rename -m module1/sub module1/new_sub` (rename nested module)
 
 ## Shell Wrapper Setup (Recommended)
 

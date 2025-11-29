@@ -11,7 +11,9 @@ from macolint.interactive import (
     prompt_snippet_name_simple,
     prompt_snippet_content,
     display_snippet_list,
-    console
+    browse_module_tree,
+    prompt_save_location,
+    console,
 )
 
 
@@ -126,48 +128,202 @@ def cli():
 
 
 @cli.command()
-@click.argument('name', required=False)
-def save(name):
-    """Save a snippet. If name is not provided, you'll be prompted for it."""
+@click.argument("name", required=False)
+@click.option(
+    "-m",
+    "--module",
+    "module_path",
+    required=False,
+    help="Create an empty module (or nested modules) without saving a snippet.",
+)
+def save(name, module_path):
+    """
+    Save a snippet or create an empty module.
+    
+    \b
+    SAVE SNIPPETS:
+      Save a snippet at root level:
+        snip save my_snippet
+    
+      Save a snippet in a module (creates modules automatically):
+        snip save module1/snippet_name
+        snip save module1/module2/nested_snippet
+    
+      Interactive save (browse modules to select location):
+        snip save
+        # Navigate through modules, type snippet name to save
+    
+    \b
+    CREATE MODULES:
+      Create an empty module:
+        snip save -m module1
+        snip save -m module1/module2
+    
+    \b
+    OPTIONS:
+      -m, --module MODULE_PATH    Create an empty module path instead of saving a snippet.
+                                  Cannot be used together with NAME argument.
+    
+    \b
+    EXAMPLES:
+      # Save snippet at root
+      snip save deploy_staging
+    
+      # Save snippet in module (auto-creates module1 if needed)
+      snip save git/commit/template
+    
+      # Interactive: browse to save location
+      snip save
+    
+      # Create empty module structure
+      snip save -m project/frontend
+    """
     try:
-        # If name not provided, prompt for it
+        # Module-only creation: snip save -m module1/module2
+        if module_path is not None:
+            if name:
+                console.print(
+                    "[red]Error: When using -m/--module, do not also pass a snippet NAME.[/red]"
+                )
+                sys.exit(1)
+
+            db.create_module_path(module_path)
+            console.print(
+                f"[green]Module '{module_path}' created successfully.[/green]"
+            )
+            return
+
+        # Snippet save (existing behaviour, now with path-aware names)
+        # If name not provided, prompt for it with module navigation
         if not name:
-            snippet_names = db.get_all_snippet_names()
-            name = prompt_snippet_name_simple(snippet_names)
+            name = prompt_save_location(db)
             if not name:
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
-        
+
         # Prompt for snippet content
         content = prompt_snippet_content()
         if content is None:
             console.print("[yellow]Cancelled.[/yellow]")
             return
-        
+
         if not content.strip():
             console.print("[red]Error: Snippet content cannot be empty.[/red]")
             return
-        
-        # Save the snippet
+
+        # Save the snippet (name may be a simple name or a module path)
         created = db.save_snippet(name, content)
         if created:
             console.print(f"[green]Snippet '{name}' saved successfully.[/green]")
         else:
             console.print(f"[yellow]Snippet '{name}' updated successfully.[/yellow]")
-            
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
 
 @cli.command()
-@click.argument('name', required=False)
-@click.option('--raw', is_flag=True, help='Output snippet content raw (for shell wrapper use)')
-@click.option('--interactive-name', is_flag=True, help='Output only the selected name after interactive prompt (for shell wrapper use)')
-def get(name, raw, interactive_name):
-    """Retrieve a snippet. If name is not provided, you'll be prompted to search for it."""
+@click.argument("name", required=False)
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Output snippet content raw (for shell wrapper use)",
+)
+@click.option(
+    "--interactive-name",
+    is_flag=True,
+    help="Output only the selected name after interactive prompt (for shell wrapper use)",
+)
+@click.option(
+    "-m",
+    "--module",
+    "module_path",
+    required=False,
+    help="Open an interactive browser inside a module (folders for snippets).",
+)
+def get(name, raw, interactive_name, module_path):
+    """
+    Retrieve a snippet by name or browse modules interactively.
+    
+    \b
+    GET BY NAME:
+      Get snippet at root level:
+        snip get my_snippet
+    
+      Get snippet by full path:
+        snip get module1/snippet_name
+        snip get module1/module2/nested_snippet
+    
+    \b
+    INTERACTIVE MODES:
+      Fuzzy search (shows all snippets):
+        snip get
+        # Type to filter, tab to complete, select snippet
+    
+      Browse modules (folder-style navigation):
+        snip get -m              # Start at root
+        snip get -m module1      # Start inside module1
+        # Select modules (ending with /) to enter, select snippets to retrieve
+        # Press Esc to go up one level
+    
+    \b
+    OPTIONS:
+      -m, --module [MODULE_PATH]    Open interactive module browser.
+                                     If MODULE_PATH provided, starts inside that module.
+                                     Cannot be used with --raw or --interactive-name.
+    
+      --raw                          Output snippet content without newline (for shell wrapper).
+                                     Used internally, not typically used directly.
+    
+      --interactive-name             Output only the selected name (for shell wrapper).
+                                     Used internally, not typically used directly.
+    
+    \b
+    EXAMPLES:
+      # Direct retrieval
+      snip get deploy_staging
+      snip get git/commit/template
+    
+      # Interactive fuzzy search
+      snip get
+    
+      # Browse modules interactively
+      snip get -m
+      snip get -m git
+    """
     try:
-        # If name not provided, enter interactive mode
+        # Module-browsing mode: snip get -m [module_path]
+        if module_path is not None:
+            if raw or interactive_name:
+                console.print(
+                    "[red]Error: --module cannot be used with --raw or --interactive-name.[/red]"
+                )
+                sys.exit(1)
+            if name:
+                console.print(
+                    "[red]Error: When using -m/--module, do not pass a snippet NAME.[/red]"
+                )
+                sys.exit(1)
+
+            # Validate starting module path (if provided)
+            if module_path:
+                start_module = db.get_module_by_path(module_path)
+                if start_module is None:
+                    console.print(
+                        f"[red]Module '{module_path}' not found.[/red]"
+                    )
+                    sys.exit(1)
+
+            selected_path = browse_module_tree(
+                db, root_module_path=module_path if module_path else None
+            )
+            if not selected_path:
+                console.print("[yellow]Cancelled.[/yellow]")
+                return
+            name = selected_path
+
+        # If name not provided, enter classic interactive mode (global search)
         if not name:
             snippet_names = db.get_all_snippet_names()
             if not snippet_names:
@@ -176,7 +332,7 @@ def get(name, raw, interactive_name):
                     sys.exit(1)
                 console.print("[yellow]No snippets found.[/yellow]")
                 return
-            
+
             # Show interactive prompt to select snippet name
             # The prompt writes to stderr, so it will be visible even when stdout is captured
             # When --interactive-name is set, the shell wrapper is calling this via command substitution
@@ -186,43 +342,57 @@ def get(name, raw, interactive_name):
             except Exception as prompt_error:
                 # If interactive prompt fails, check if it's a TTY issue
                 error_str = str(prompt_error).lower()
-                is_tty_error = 'terminal' in error_str or 'tty' in error_str or 'not a terminal' in error_str
-                
+                is_tty_error = (
+                    "terminal" in error_str
+                    or "tty" in error_str
+                    or "not a terminal" in error_str
+                )
+
                 # Even in interactive-name mode, we should show errors on stderr
                 # so the user knows what went wrong
                 if interactive_name:
                     # Write error to stderr (visible) but still exit with error code
-                    sys.stderr.write(f"Error: Failed to show interactive prompt: {prompt_error}\n")
+                    sys.stderr.write(
+                        f"Error: Failed to show interactive prompt: {prompt_error}\n"
+                    )
                     sys.stderr.flush()
                     sys.exit(1)
-                
+
                 if raw:
                     # In raw mode, fail silently
                     sys.exit(1)
-                
+
                 if is_tty_error:
-                    console.print("[red]Error: Interactive mode requires a terminal.[/red]")
-                    console.print("[yellow]Please provide a snippet name: snip get <name>[/yellow]")
+                    console.print(
+                        "[red]Error: Interactive mode requires a terminal.[/red]"
+                    )
+                    console.print(
+                        "[yellow]Please provide a snippet name: snip get <name>[/yellow]"
+                    )
                 else:
-                    console.print(f"[red]Error: Failed to show interactive prompt: {prompt_error}[/red]")
-                    console.print("[yellow]Make sure you're running this in a terminal.[/yellow]")
+                    console.print(
+                        f"[red]Error: Failed to show interactive prompt: {prompt_error}[/red]"
+                    )
+                    console.print(
+                        "[yellow]Make sure you're running this in a terminal.[/yellow]"
+                    )
                 sys.exit(1)
-            
+
             if not name:
                 if raw or interactive_name:
                     # In raw/interactive-name mode, output nothing on cancel
                     sys.exit(1)
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
-            
+
             # If --interactive-name flag is set, output only the name and exit
             # This is used by the shell wrapper to get the name, then it will
             # call snip get <name> --raw to get the content
             if interactive_name:
-                print(name, end='')
+                print(name, end="")
                 return
-        
-        # Retrieve the snippet
+
+        # Retrieve the snippet (supports hierarchical module paths)
         snippet = db.get_snippet(name)
         if snippet is None:
             if raw:
@@ -230,7 +400,7 @@ def get(name, raw, interactive_name):
                 sys.exit(1)
             console.print(f"[red]Snippet '{name}' not found.[/red]")
             sys.exit(1)
-        
+
         # Output the snippet content
         # If --raw flag is set, output without newline (for shell wrapper)
         # Otherwise, output with newline for direct use
@@ -241,7 +411,7 @@ def get(name, raw, interactive_name):
             # so the content is visible after the interactive prompt
             content = snippet.content.rstrip()
             print(content)
-        
+
     except Exception as e:
         if raw or interactive_name:
             # In raw/interactive-name mode, don't output error messages
@@ -253,7 +423,39 @@ def get(name, raw, interactive_name):
 @cli.command()
 @click.argument('name', required=False)
 def update(name):
-    """Update an existing snippet. If name is not provided, you'll be prompted to search for it."""
+    """
+    Update the content of an existing snippet.
+    
+    \b
+    USAGE:
+      Update snippet by name:
+        snip update my_snippet
+        snip update module1/snippet_name
+    
+      Interactive update (select snippet to update):
+        snip update
+        # Select snippet from list, then edit content
+    
+    \b
+    WORKFLOW:
+      1. Select snippet (interactive or by name)
+      2. Editor opens with existing content as default
+      3. Edit content and save, or press Esc to cancel
+    
+    \b
+    EXAMPLES:
+      # Update by name
+      snip update deploy_staging
+      snip update git/commit/template
+    
+      # Interactive selection
+      snip update
+    
+    \b
+    NOTE:
+      This command only updates snippet content, not names or locations.
+      Use 'snip rename' to rename snippets or move them between modules.
+    """
     try:
         # If name not provided, enter interactive mode
         if not name:
@@ -297,28 +499,104 @@ def update(name):
 
 
 @cli.command()
-@click.argument('name', required=False)
-def delete(name):
-    """Delete a snippet. If name is not provided, you'll be prompted to search for it."""
+@click.argument("name", required=False)
+@click.option(
+    "-m",
+    "--module",
+    "module_path",
+    required=False,
+    help="Delete an entire module (and its sub-modules/snippets) instead of a single snippet.",
+)
+def delete(name, module_path):
+    """
+    Delete a snippet or an entire module tree.
+    
+    \b
+    DELETE SNIPPETS:
+      Delete snippet by name:
+        snip delete my_snippet
+        snip delete module1/snippet_name
+    
+      Interactive delete (select snippet):
+        snip delete
+        # Select snippet from list, confirm deletion
+    
+    \b
+    DELETE MODULES:
+      Delete entire module and all contents:
+        snip delete -m module1
+        snip delete -m module1/module2
+    
+      WARNING: Module deletion is permanent and cascades to:
+        - All child modules (recursively)
+        - All snippets in the module and sub-modules
+        - Cannot be undone
+    
+    \b
+    OPTIONS:
+      -m, --module MODULE_PATH    Delete an entire module tree instead of a snippet.
+                                   Cannot be used together with NAME argument.
+    
+    \b
+    EXAMPLES:
+      # Delete snippet
+      snip delete old_snippet
+      snip delete module1/snippet_name
+      
+      # Delete module (with confirmation prompt)
+      snip delete -m old_module
+      snip delete -m module1/submodule
+    
+    \b
+    SAFETY:
+      All deletions require confirmation before proceeding.
+    """
     try:
+        # Module deletion takes precedence when --module is used
+        if module_path is not None:
+            if name:
+                console.print(
+                    "[red]Error: When using -m/--module, do not also pass a snippet NAME.[/red]"
+                )
+                sys.exit(1)
+
+            # Confirm module deletion with cascade
+            confirm = click.confirm(
+                f"Are you sure you want to delete module '{module_path}' and all its contents?"
+            )
+            if not confirm:
+                console.print("[yellow]Deletion cancelled.[/yellow]")
+                return
+
+            deleted = db.delete_module_tree(module_path)
+            if deleted:
+                console.print(
+                    f"[green]Module '{module_path}' and its contents deleted successfully.[/green]"
+                )
+            else:
+                console.print(f"[red]Module '{module_path}' not found.[/red]")
+                sys.exit(1)
+            return
+
+        # Snippet deletion (existing behaviour)
         # If name not provided, enter interactive mode
         if not name:
             snippet_names = db.get_all_snippet_names()
             if not snippet_names:
                 console.print("[yellow]No snippets found.[/yellow]")
                 return
-            
+
             name = prompt_snippet_name_simple(snippet_names)
             if not name:
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
-        
+
         # Confirm deletion
         confirm = click.confirm(f"Are you sure you want to delete snippet '{name}'?")
         if not confirm:
             console.print("[yellow]Deletion cancelled.[/yellow]")
             return
-        
+
         # Delete the snippet
         deleted = db.delete_snippet(name)
         if deleted:
@@ -326,7 +604,145 @@ def delete(name):
         else:
             console.print(f"[red]Snippet '{name}' not found.[/red]")
             sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('old_path', required=False)
+@click.argument('new_path', required=False)
+@click.option(
+    '-m',
+    '--module',
+    'is_module',
+    is_flag=True,
+    help='Rename a module instead of a snippet.',
+)
+def rename(old_path, new_path, is_module):
+    """
+    Rename a snippet or module, or move it to a different location.
+    
+    \b
+    RENAME SNIPPETS:
+      Rename at root level:
+        snip rename old_name new_name
+    
+      Rename in module (stays in same module):
+        snip rename module1/old_name new_name
+        snip rename module1/old_name module1/new_name
+    
+      Move snippet to different module:
+        snip rename module1/snippet module2/snippet
+        snip rename root_snippet module1/moved_snippet
+    
+    \b
+    RENAME MODULES:
+      Rename module:
+        snip rename -m module1 module2
+        snip rename -m module1/sub module1/new_sub
+    
+      Move module to different parent:
+        snip rename -m module1/sub module2/moved_sub
+    
+      NOTE: Renaming a module automatically updates all child paths.
+    
+    \b
+    INTERACTIVE MODE:
+      Interactive rename (prompts for old and new paths):
+        snip rename          # For snippets
+        snip rename -m       # For modules
+    
+    \b
+    OPTIONS:
+      -m, --module    Rename a module instead of a snippet.
+                      If not specified, auto-detects based on old_path.
+    
+    \b
+    EXAMPLES:
+      # Rename snippet
+      snip rename old_snippet new_snippet
+      snip rename module1/snippet new_name
+      
+      # Move snippet
+      snip rename module1/snippet module2/snippet
+      
+      # Rename module
+      snip rename -m old_module new_module
+      snip rename -m module1/sub module1/renamed_sub
+      
+      # Move module
+      snip rename -m module1/sub module2/moved_sub
+      
+      # Interactive
+      snip rename
+      snip rename -m
+    """
+    try:
+        # Auto-detect if it's a module or snippet if -m not specified
+        if not is_module and old_path:
+            # Check if old_path is a module
+            module = db.get_module_by_path(old_path)
+            if module is not None:
+                is_module = True
+                console.print(f"[yellow]Detected '{old_path}' as a module. Use -m flag to be explicit.[/yellow]")
+
+        # If old_path not provided, prompt for it
+        if not old_path:
+            if is_module:
+                # For modules, list all modules
+                all_modules = db.list_modules()
+                if not all_modules:
+                    console.print("[yellow]No modules found.[/yellow]")
+                    return
+                console.print("[cyan]Select module to rename:[/cyan]")
+                old_path = prompt_snippet_name_simple(all_modules)
+            else:
+                # For snippets, list snippets
+                snippet_names = db.get_all_snippet_names()
+                if not snippet_names:
+                    console.print("[yellow]No snippets found.[/yellow]")
+                    return
+                old_path = prompt_snippet_name_simple(snippet_names)
             
+            if not old_path:
+                console.print("[yellow]Cancelled.[/yellow]")
+                return
+
+        # If new_path not provided, prompt for it
+        if not new_path:
+            if is_module:
+                console.print("[cyan]Enter new module path (or just new name to rename in place):[/cyan]")
+            else:
+                console.print("[cyan]Enter new snippet path (or just new name to rename in place):[/cyan]")
+            new_path = prompt_snippet_name_simple([])  # Allow free-form input
+            if not new_path:
+                console.print("[yellow]Cancelled.[/yellow]")
+                return
+
+        # Remove trailing / if present (for consistency)
+        if old_path.endswith("/"):
+            old_path = old_path[:-1]
+        if new_path.endswith("/"):
+            new_path = new_path[:-1]
+
+        # Perform rename
+        if is_module:
+            success = db.rename_module(old_path, new_path)
+            if success:
+                console.print(f"[green]Module '{old_path}' renamed to '{new_path}' successfully.[/green]")
+            else:
+                console.print(f"[red]Failed to rename module '{old_path}'. Module not found or new path conflicts.[/red]")
+                sys.exit(1)
+        else:
+            success = db.rename_snippet(old_path, new_path)
+            if success:
+                console.print(f"[green]Snippet '{old_path}' renamed to '{new_path}' successfully.[/green]")
+            else:
+                console.print(f"[red]Failed to rename snippet '{old_path}'. Snippet not found or new path conflicts.[/red]")
+                sys.exit(1)
+
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
@@ -334,11 +750,118 @@ def delete(name):
 
 @cli.command()
 @click.argument('keyword', required=False)
-def list(keyword):
-    """List all snippets. Optionally filter by keyword."""
+@click.option(
+    '-m',
+    '--module',
+    'module_path',
+    required=False,
+    help='List contents of a specific module instead of root level.',
+)
+def list(keyword, module_path):
+    """
+    List snippets and modules at a specific level.
+    
+    \b
+    LIST ROOT LEVEL:
+      List all top-level items:
+        snip list
+      
+      Filter by keyword:
+        snip list git
+        snip list deploy
+    
+    \b
+    LIST MODULE CONTENTS:
+      List contents of a specific module:
+        snip list -m module1
+        snip list -m module1/module2
+      
+      List module with keyword filter:
+        snip list -m module1 deploy
+    
+    \b
+    OUTPUT FORMAT:
+      - Modules are shown with trailing "/" (in yellow)
+      - Snippets are shown as full paths (in cyan)
+      - Only direct children are shown (not nested descendants)
+      - Sorted alphabetically
+    
+    \b
+    OPTIONS:
+      -m, --module MODULE_PATH    List contents of a specific module instead of root level.
+    
+    \b
+    EXAMPLES:
+      # List root level
+      snip list
+      snip list git
+      
+      # List module contents
+      snip list -m module1
+      snip list -m module1/module2
+      snip list -m module1 deploy
+    """
     try:
-        snippets = db.list_snippets(keyword=keyword)
-        display_snippet_list(snippets, keyword=keyword)
+        # Determine which module to list (None = root)
+        target_module = None
+        if module_path:
+            target_module = db.get_module_by_path(module_path)
+            if target_module is None:
+                console.print(f"[red]Module '{module_path}' not found.[/red]")
+                sys.exit(1)
+        
+        # Get direct children of the target module
+        child_modules = db.get_module_children(target_module)
+        child_snippets = db.list_snippets_in_module(target_module)
+        
+        # Build module paths
+        if target_module is None:
+            # At root: just module names
+            module_paths = [m.name for m in child_modules]
+        else:
+            # Inside a module: show relative names (just the module name, not full path)
+            module_paths = [m.name for m in child_modules]
+        
+        # Build snippet paths (these are already full paths from list_snippets_in_module)
+        snippet_paths = child_snippets
+        
+        # Apply keyword filter if provided
+        if keyword:
+            keyword_lower = keyword.lower()
+            module_paths = [m for m in module_paths if keyword_lower in m.lower()]
+            snippet_paths = [s for s in snippet_paths if keyword_lower in s.lower()]
+        
+        # Show modules with a trailing "/" to distinguish them
+        entries = [f"{m}/" for m in module_paths] + snippet_paths
+        # Stable sort so modules and snippets are mixed alphabetically
+        entries = sorted(entries)
+
+        # Build title to show which module we're listing
+        if target_module is None:
+            title = "Snippets" + (f" (filtered: {keyword})" if keyword else "")
+        else:
+            module_full_path = db.get_module_full_path(target_module)
+            title = f"Snippets in {module_full_path}" + (f" (filtered: {keyword})" if keyword else "")
+        
+        # Use a custom display function or modify the existing one
+        if not entries:
+            if keyword:
+                console.print(f"[yellow]No items found matching '{keyword}' in '{module_full_path if target_module else '/'}'.[/yellow]")
+            else:
+                location = db.get_module_full_path(target_module) if target_module else "/"
+                console.print(f"[yellow]No snippets or modules in '{location}'.[/yellow]")
+        else:
+            from rich.table import Table
+            from rich.text import Text
+            table = Table(title=title)
+            table.add_column("Name", style="cyan")
+            for entry in entries:
+                # Modules (ending with /) in yellow, snippets in cyan
+                if entry.endswith("/"):
+                    table.add_row(Text(entry, style="yellow"))
+                else:
+                    table.add_row(entry)
+            console.print(table)
         
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -351,7 +874,67 @@ def list(keyword):
 @click.option('--fix-path', is_flag=True, help='Also fix PATH if snip command is not found')
 @click.option('--force', is_flag=True, help='Force update even if wrapper is already installed')
 def setup(shell, fix_path, force):
-    """Automatically set up shell wrapper for snip get command."""
+    """
+    Automatically set up shell wrapper for seamless snippet insertion.
+    
+    \b
+    WHAT IT DOES:
+      - Adds wrapper function to your shell config file
+      - Enables automatic snippet insertion into command line
+      - Detects and updates outdated wrappers automatically
+      - Optionally fixes PATH if snip command not found
+    
+    \b
+    BASIC USAGE:
+      Automatic setup (recommended):
+        snip setup
+        # Auto-detects shell, adds wrapper, provides reload instructions
+    
+    \b
+    OPTIONS:
+      --shell SHELL          Specify shell manually: bash, zsh, fish, or auto (default).
+      
+      --fix-path            Also fix PATH if snip command is not found.
+                            Adds Python scripts directory to PATH in shell config.
+      
+      --force               Force update even if wrapper is already installed.
+    
+    \b
+    EXAMPLES:
+      # Automatic setup
+      snip setup
+      
+      # Specify shell
+      snip setup --shell zsh
+      
+      # Fix PATH and setup
+      snip setup --fix-path
+      
+      # Force update
+      snip setup --force
+      
+      # Combined
+      snip setup --shell zsh --fix-path --force
+    
+    \b
+    AFTER SETUP:
+      Reload your shell configuration:
+        source ~/.zshrc      # for zsh
+        source ~/.bashrc     # for bash
+        source ~/.config/fish/config.fish  # for fish
+    
+    \b
+    HOW IT WORKS:
+      After setup, when you run 'snip get <name>', the snippet content
+      automatically appears in your command line buffer, ready to edit and execute.
+    
+    \b
+    FEATURES:
+      - Idempotent: safe to run multiple times
+      - Smart detection: finds existing installations
+      - Auto-update: detects outdated wrappers
+      - No duplicates: won't create duplicate entries
+    """
     try:
         # Check if snip command is in PATH
         snip_in_path = shutil.which('snip') is not None
@@ -481,7 +1064,7 @@ def setup(shell, fix_path, force):
 
 
 # Wrapper version - increment this when the wrapper code changes
-WRAPPER_VERSION = "2.4"
+WRAPPER_VERSION = "2.5"
 
 def _get_wrapper_code(shell: str) -> str:
     """Get the wrapper code for the specified shell."""
@@ -495,7 +1078,10 @@ snip() {{
   
   # If this is 'snip get' (with or without name), use the wrapper behavior
   if [ "${{1}}" = "get" ]; then
-    if [ -n "${{2}}" ]; then
+    # If second arg looks like an option (starts with -), fall back to normal call
+    if [ -n "${{2}}" ] && [[ "${{2}}" == -* ]]; then
+      "$snip_cmd" "${{@}}"
+    elif [ -n "${{2}}" ]; then
       # Has name: get snippet directly
       local cmd
       cmd=$("$snip_cmd" get "${{2}}" --raw 2>/dev/null) || return $?
@@ -533,7 +1119,10 @@ snip() {{
   
   # If this is 'snip get' (with or without name), use the wrapper behavior
   if [ "${{1}}" = "get" ]; then
-    if [ -n "${{2}}" ]; then
+    # If second arg looks like an option (starts with -), fall back to normal call
+    if [ -n "${{2}}" ] && [[ "${{2}}" == -* ]]; then
+      "$snip_cmd" "${{@}}"
+    elif [ -n "${{2}}" ]; then
       # Has name: get snippet directly
       local cmd
       cmd=$("$snip_cmd" get "${{2}}" --raw 2>/dev/null) || return $?
@@ -565,7 +1154,10 @@ snip() {{
 function snip
     # If this is 'snip get' (with or without name), use the wrapper behavior
     if [ "${{argv[1]}}" = "get" ]
-        if [ -n "${{argv[2]}}" ]
+        # If second arg looks like an option (starts with -), fall back to normal call
+        if [ (count $argv) -ge 2 -a (string match -q -- '-' (string sub -s 1 -l 1 $argv[2])) ]
+            command snip $argv
+        else if [ -n "${{argv[2]}}" ]
             # Has name: get snippet directly
             set cmd (command snip get "${{argv[2]}}" --raw 2>/dev/null)
             if test $status -eq 0
@@ -813,7 +1405,45 @@ def _fix_path_in_shell_config(shell: str, scripts_path: Path):
 
 @cli.command()
 def doctor():
-    """Diagnose and report issues with Macolint installation."""
+    """
+    Diagnose and report issues with Macolint installation.
+    
+    \b
+    WHAT IT CHECKS:
+      ✓ snip command in PATH
+      ✓ Shell wrapper installation status
+      ✓ Database accessibility
+      ✓ Snippet count
+    
+    \b
+    WHAT IT PROVIDES:
+      - Detailed status of each component
+      - Actionable recommendations
+      - Commands to run for fixes
+    
+    \b
+    WHEN TO USE:
+      - After installation to verify setup
+      - When 'snip' command is not found
+      - When shell wrapper is not working
+      - When experiencing unexpected errors
+    
+    \b
+    EXAMPLE OUTPUT:
+      Macolint Doctor
+      
+      ✓ snip command found: /usr/local/bin/snip
+      ✓ Shell wrapper installed for zsh
+        Config file: /Users/username/.zshrc
+      ✓ Database accessible (15 snippets)
+    
+    \b
+    USAGE:
+      snip doctor
+      
+      # If snip not in PATH, use:
+      python3 -m macolint.cli doctor
+    """
     console.print("[bold]Macolint Doctor[/bold]")
     console.print("")
     

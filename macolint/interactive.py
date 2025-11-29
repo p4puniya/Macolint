@@ -273,3 +273,240 @@ def display_snippet_list(snippets: List[str], keyword: Optional[str] = None):
     
     console.print(table)
 
+
+def prompt_save_location(db: Database) -> Optional[str]:
+    """
+    Interactive prompt for selecting where to save a snippet.
+    Shows modules (with '/') and allows navigation, then prompts for snippet name.
+    Returns the full path (e.g., 'module1/module2/snippet_name') or None if cancelled.
+    """
+    from prompt_toolkit.output import create_output
+
+    # Start at root
+    current_module: Optional[object] = None
+    module_stack: List[Optional[object]] = [None]
+
+    while True:
+        current_module = module_stack[-1]
+        # Compute path label for display
+        if current_module is None:
+            path_label = "/"
+        else:
+            path_label = db.get_module_full_path(current_module)
+
+        # Fetch children
+        child_modules = db.get_module_children(current_module)
+        child_snippets = db.list_snippets_in_module(current_module)
+
+        # Build choices: modules with '/' suffix
+        choices: List[str] = []
+        module_map = {}
+
+        for m in child_modules:
+            label = f"{m.name}/"
+            full_path = db.get_module_full_path(m)
+            choices.append(label)
+            module_map[label] = full_path
+
+        # Also allow typing a new snippet name directly
+        # We'll handle this in the prompt logic
+
+        if not choices and not child_snippets:
+            console.print(f"[yellow]No modules in '{path_label}'. Type a snippet name to save here.[/yellow]")
+
+        # Setup completer and key bindings
+        completer = FuzzyCompleter(WordCompleter(choices, ignore_case=True))
+        kb = KeyBindings()
+
+        @kb.add(Keys.Escape)
+        def _(event):
+            event.app.exit(result="__ESC__")
+
+        try:
+            output = create_output(stdout=sys.stderr)
+        except Exception:
+            output = None
+
+        session = PromptSession(
+            completer=completer,
+            complete_while_typing=True,
+            key_bindings=kb,
+            mouse_support=False,
+            output=output if output else None,
+        )
+
+        try:
+            console.print(f"[cyan]Save in: {path_label}[/cyan]")
+            console.print("[dim]Select a module (ends with '/') or type a snippet name[/dim]")
+            selection = session.prompt("> ")
+        except (KeyboardInterrupt, EOFError):
+            selection = "__ESC__"
+
+        if selection == "__ESC__" or not selection:
+            if len(module_stack) == 1:
+                return None
+            # Go up one level
+            module_stack.pop()
+            continue
+
+        selection = selection.strip()
+
+        # Check if it's a module selection (ends with /)
+        if selection.endswith("/"):
+            # Remove trailing / and check if it matches a module
+            module_name = selection[:-1]
+            matching_modules = [m for m in child_modules if m.name == module_name]
+            if matching_modules:
+                # Enter existing sub-module
+                target_module = matching_modules[0]
+                module_stack.append(target_module)
+                continue
+            else:
+                # Try fuzzy match first
+                module_labels = [f"{m.name}/" for m in child_modules]
+                matches = fuzzy_match(selection, module_labels)
+                if matches:
+                    module_name = matches[0][:-1]
+                    matching_modules = [m for m in child_modules if m.name == module_name]
+                    if matching_modules:
+                        target_module = matching_modules[0]
+                        module_stack.append(target_module)
+                        continue
+                
+                # No existing module found - create a new one and navigate into it
+                # Build the full path for the new module
+                if current_module is None:
+                    new_module_path = module_name
+                else:
+                    current_path = db.get_module_full_path(current_module)
+                    new_module_path = f"{current_path}/{module_name}"
+                
+                # Create the module
+                new_module = db.create_module_path(new_module_path)
+                # Navigate into it
+                module_stack.append(new_module)
+                console.print(f"[green]Created module '{new_module_path}'[/green]")
+                continue
+
+        # Not a module selection - treat as snippet name
+        # Build full path
+        if current_module is None:
+            full_path = selection
+        else:
+            module_path = db.get_module_full_path(current_module)
+            full_path = f"{module_path}/{selection}"
+
+        return full_path
+
+
+def browse_module_tree(db: Database, root_module_path: Optional[str] = None) -> Optional[str]:
+    """
+    Interactive browser for modules and snippets.
+    Lets the user navigate a folder-like hierarchy:
+    - Shows child modules (with a trailing '/') and snippets in the current module.
+    - Selecting a module enters it.
+    - Pressing Esc goes up one level; Esc at the root exits.
+    Returns the selected snippet's full path or None if cancelled.
+    """
+    from prompt_toolkit.output import create_output
+
+    # Resolve starting module
+    current_module = db.get_module_by_path(root_module_path) if root_module_path else None
+    module_stack: List[Optional[object]] = [current_module]
+
+    while True:
+        current_module = module_stack[-1]
+        # Compute path label for display
+        if current_module is None:
+            path_label = "/"
+        else:
+            path_label = db.get_module_full_path(current_module)
+
+        # Fetch children
+        child_modules = db.get_module_children(current_module)
+        child_snippets = db.list_snippets_in_module(current_module)
+
+        # Build choices: display_label -> (kind, value)
+        choices: List[str] = []
+        value_map = {}
+
+        for m in child_modules:
+            label = f"{m.name}/"
+            full_path = db.get_module_full_path(m)
+            choices.append(label)
+            value_map[label] = ("module", full_path)
+
+        for full_path in child_snippets:
+            base_name = full_path.split("/")[-1]
+            label = base_name
+            # Avoid clobbering module labels; snippets and modules can share base names but
+            # our schema keeps (parent_id, name) unique, so this is safe within a module.
+            if label in value_map:
+                label = full_path
+            choices.append(label)
+            value_map[label] = ("snippet", full_path)
+
+        if not choices:
+            console.print(f"[yellow]No snippets or sub-modules in '{path_label}'.[/yellow]")
+
+        # Setup completer and key bindings for this level
+        completer = FuzzyCompleter(WordCompleter(choices, ignore_case=True))
+        kb = KeyBindings()
+
+        @kb.add(Keys.Escape)
+        def _(event):
+            # Esc: go up one level or exit if at root
+            event.app.exit(result="__ESC__")
+
+        # Ensure prompt is visible when stdout is captured
+        try:
+            output = create_output(stdout=sys.stderr)
+        except Exception:
+            output = None
+
+        session = PromptSession(
+            completer=completer,
+            complete_while_typing=True,
+            key_bindings=kb,
+            mouse_support=False,
+            output=output if output else None,
+        )
+
+        try:
+            console.print(f"[cyan]Module: {path_label}[/cyan]")
+            selection = session.prompt("> ")
+        except (KeyboardInterrupt, EOFError):
+            # Treat these like Esc at the current level
+            selection = "__ESC__"
+
+        if selection == "__ESC__" or not selection:
+            if len(module_stack) == 1:
+                # At root, exit entirely
+                return None
+            # Go up one level
+            module_stack.pop()
+            # Clear line for better UX
+            continue
+
+        selection = selection.strip()
+        if selection not in value_map:
+            # Try fuzzy match using our own fuzzy_match helper
+            matches = fuzzy_match(selection, list(value_map.keys()))
+            if not matches:
+                console.print(f"[red]No match for '{selection}'.[/red]")
+                continue
+            selection = matches[0]
+
+        kind, value = value_map[selection]
+        if kind == "module":
+            # Enter sub-module
+            target_module = db.get_module_by_path(value)
+            if target_module is None:
+                console.print(f"[red]Module '{value}' not found.[/red]")
+                continue
+            module_stack.append(target_module)
+            continue
+
+        # kind == "snippet"
+        return value
+
