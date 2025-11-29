@@ -1,6 +1,7 @@
 #!/bin/bash
 # Macolint Installation Script
 # Supports macOS and Linux
+# Version: 1.0.1
 
 set -e  # Exit on error
 
