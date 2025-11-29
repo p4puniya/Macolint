@@ -15,27 +15,27 @@ NC='\033[0m' # No Color
 REPO_URL="https://github.com/p4puniya/Macolint.git"
 INSTALL_URL="git+${REPO_URL}"
 
-# Print colored messages
+# Print colored messages (using printf for better compatibility)
 print_info() {
-    echo -e "${BLUE}ℹ${NC} $1"
+    printf "${BLUE}ℹ${NC} %s\n" "$1"
 }
 
 print_success() {
-    echo -e "${GREEN}✓${NC} $1"
+    printf "${GREEN}✓${NC} %s\n" "$1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
+    printf "${YELLOW}⚠${NC} %s\n" "$1"
 }
 
 print_error() {
-    echo -e "${RED}✗${NC} $1"
+    printf "${RED}✗${NC} %s\n" "$1"
 }
 
 print_header() {
-    echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BLUE}  Macolint Installation${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "${BLUE}  Macolint Installation${NC}\n"
+    printf "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n\n"
 }
 
 # Detect OS
@@ -71,8 +71,15 @@ command_exists() {
 }
 
 # Extract version number from Python version string (portable)
+# Python version strings are like "Python 3.9.5" or "Python 2.7.18"
 extract_version() {
-    echo "$1" | sed -E 's/.*([0-9]+\.[0-9]+).*/\1/' | head -1
+    # Try to match "Python X.Y" pattern first
+    if echo "$1" | grep -q "Python [0-9]\+\.[0-9]\+"; then
+        echo "$1" | sed -n 's/.*Python \([0-9]\+\.[0-9]\+\).*/\1/p' | head -1
+    else
+        # Fallback: extract first X.Y pattern
+        echo "$1" | sed -n 's/.*\([0-9]\+\.[0-9]\+\).*/\1/p' | head -1
+    fi
 }
 
 # Compare version numbers (returns 0 if version >= 3.8)
@@ -90,26 +97,45 @@ check_version() {
 
 # Find Python executable
 find_python() {
+    # Always prefer python3 if available
     if command_exists python3; then
         PYTHON_CMD="python3"
         PIP_CMD="pip3"
     elif command_exists python; then
-        # Check if it's Python 3
-        PYTHON_VERSION_STR=$(python --version 2>&1)
-        PYTHON_VERSION=$(extract_version "$PYTHON_VERSION_STR")
+        # Check if it's Python 3 using the most reliable method
+        PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "")
+        
+        if [[ -z "$PYTHON_VERSION" ]]; then
+            # Fallback to version string parsing
+            PYTHON_VERSION_STR=$(python --version 2>&1)
+            PYTHON_VERSION=$(extract_version "$PYTHON_VERSION_STR")
+        fi
+        
+        # Only use 'python' if it's actually Python 3
         if check_version "$PYTHON_VERSION"; then
             PYTHON_CMD="python"
             PIP_CMD="pip"
         else
+            print_warning "Found 'python' but it's version $PYTHON_VERSION (Python 3.8+ required)"
             return 1
         fi
     else
         return 1
     fi
     
-    # Verify Python version
-    PYTHON_VERSION_STR=$($PYTHON_CMD --version 2>&1)
-    PYTHON_VERSION=$(extract_version "$PYTHON_VERSION_STR")
+    # Final verification using Python itself (most reliable)
+    PYTHON_VERSION=$($PYTHON_CMD -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "")
+    
+    if [[ -z "$PYTHON_VERSION" ]]; then
+        # Last resort: parse version string
+        PYTHON_VERSION_STR=$($PYTHON_CMD --version 2>&1)
+        PYTHON_VERSION=$(extract_version "$PYTHON_VERSION_STR")
+    fi
+    
+    if [[ -z "$PYTHON_VERSION" ]]; then
+        print_error "Could not determine Python version"
+        return 1
+    fi
     
     if ! check_version "$PYTHON_VERSION"; then
         print_error "Python 3.8+ required, found $PYTHON_VERSION"
@@ -228,18 +254,18 @@ main() {
     setup_macolint
     
     # Success message
-    echo ""
+    printf "\n"
     print_success "Installation complete!"
-    echo ""
+    printf "\n"
     print_info "To start using Macolint, reload your shell:"
-    echo -e "  ${GREEN}$(get_reload_command)${NC}"
-    echo ""
+    printf "  ${GREEN}%s${NC}\n" "$(get_reload_command)"
+    printf "\n"
     print_info "Or simply open a new terminal window."
-    echo ""
+    printf "\n"
     print_info "Try it out:"
-    echo -e "  ${GREEN}snip doctor${NC}  # Check installation"
-    echo -e "  ${GREEN}snip save test${NC}  # Save your first snippet"
-    echo ""
+    printf "  ${GREEN}snip doctor${NC}  # Check installation\n"
+    printf "  ${GREEN}snip save test${NC}  # Save your first snippet\n"
+    printf "\n"
 }
 
 # Run main function

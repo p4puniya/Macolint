@@ -17,6 +17,11 @@ Install Macolint with a single command (macOS & Linux):
 curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/main/install.sh | sh
 ```
 
+**Copy-paste ready:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/main/install.sh | sh
+```
+
 This will:
 - ✅ Automatically detect your OS and shell
 - ✅ Install Macolint from GitHub
