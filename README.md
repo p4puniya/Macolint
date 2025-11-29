@@ -22,6 +22,11 @@ curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/main/install.sh |
 curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/main/install.sh | sh
 ```
 
+**Note:** If you see `-e` flags in the output, GitHub's CDN may be caching an old version. Wait 2-3 minutes and try again, or use the commit-specific URL:
+```bash
+curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/4344e5d/install.sh | sh
+```
+
 This will:
 - ✅ Automatically detect your OS and shell
 - ✅ Install Macolint from GitHub
