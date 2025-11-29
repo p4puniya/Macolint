@@ -9,12 +9,51 @@ A cloud-synced terminal snippet manager that helps developers reuse code faster 
 - Encrypted local storage
 - Fast CLI interface
 
-## Installation
+## Quick Install
+
+Install Macolint with a single command (macOS & Linux):
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/p4puniya/Macolint/main/install.sh | sh
+```
+
+This will:
+- ✅ Automatically detect your OS and shell
+- ✅ Install Macolint from GitHub
+- ✅ Configure PATH and shell wrapper
+- ✅ Set everything up for immediate use
+
+After installation, reload your shell or open a new terminal, then try:
+```bash
+snip doctor  # Verify installation
+snip save test  # Save your first snippet
+```
+
+**Troubleshooting:** If you encounter any issues, run `snip doctor` to diagnose problems.
+
+---
+
+## Manual Installation
+
+If you prefer to install manually or the quick install doesn't work:
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/p4puniya/Macolint.git
+cd Macolint
+
+# Install
 pip3 install -e .
 # or
 python3 -m pip install -e .
+```
+
+### From GitHub (without cloning)
+
+```bash
+pip3 install git+https://github.com/p4puniya/Macolint.git
 ```
 
 ### Fixing PATH Issues
@@ -220,6 +259,54 @@ The snippet content (e.g., `git push origin HEAD`) will automatically appear in 
 - It automatically detects and updates outdated versions
 - You can force an update with `--force` flag
 - Safe to run multiple times - won't duplicate entries
+
+## Troubleshooting
+
+### Installation Issues
+
+If the quick install script fails:
+
+1. **Check Python version:**
+   ```bash
+   python3 --version  # Should be 3.8 or higher
+   ```
+
+2. **Check pip:**
+   ```bash
+   pip3 --version
+   ```
+
+3. **Manual installation:**
+   Follow the [Manual Installation](#manual-installation) section above.
+
+### PATH Issues
+
+If `snip` command is not found after installation:
+
+```bash
+# Diagnose the issue
+python3 -m macolint.cli doctor
+
+# Auto-fix PATH and shell wrapper
+python3 -m macolint.cli setup --fix-path
+
+# Reload your shell
+source ~/.zshrc  # or ~/.bashrc for bash
+```
+
+### Shell Wrapper Not Working
+
+If `snip get <name>` doesn't insert the snippet into your command line:
+
+```bash
+# Re-run setup
+snip setup --force
+
+# Reload your shell
+source ~/.zshrc  # or ~/.bashrc for bash, or ~/.config/fish/config.fish for fish
+```
+
+For more help, run `snip doctor` to get detailed diagnostics.
 
 ## MVP Status
 
