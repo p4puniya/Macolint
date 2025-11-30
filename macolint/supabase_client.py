@@ -38,7 +38,24 @@ DEFAULT_SUPABASE_URL: Optional[str] = "https://rocayclvfmaskztccqon.supabase.co"
 DEFAULT_SUPABASE_ANON_KEY: Optional[str] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJvY2F5Y2x2Zm1hc2t6dGNjcW9uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ0ODU5ODAsImV4cCI6MjA4MDA2MTk4MH0.SHnVoP91AQCoJjgCGIs1fQNwZ4pP6tYnrA1qjgAAMPc" # Set this to your Supabase anon key
 
 # Load environment variables from .env file (allows users to override defaults)
-load_dotenv()
+# Try multiple locations: project root, ~/.macolint/, and current directory
+from pathlib import Path
+env_paths = [
+    Path.cwd() / ".env",
+    Path.home() / ".macolint" / ".env",
+    Path(__file__).parent.parent / ".env",
+]
+for env_path in env_paths:
+    if env_path.exists():
+        try:
+            load_dotenv(env_path, override=False)
+            break
+        except Exception as e:
+            # If .env file has parsing errors, log warning but continue
+            # This allows the app to work even with malformed .env files
+            import warnings
+            warnings.warn(f"Could not parse .env file at {env_path}: {e}. Using defaults.", UserWarning)
+            pass
 
 # Use environment variables if set, otherwise fall back to defaults
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or DEFAULT_SUPABASE_URL

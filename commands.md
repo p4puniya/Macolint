@@ -6,7 +6,8 @@ Complete reference for all Macolint commands with all possible use cases.
 
 - [save](#save) - Save snippets or create modules
 - [get](#get) - Retrieve snippets
-- [update](#update) - Update snippet content
+- [edit](#edit) - Edit snippet content
+- [update](#update) - Update Macolint to latest version
 - [rename](#rename) - Rename snippets or modules
 - [delete](#delete) - Delete snippets or modules
 - [list](#list) - List snippets and modules
@@ -167,36 +168,79 @@ snip get --interactive-name
 
 ---
 
-## update
+## edit
 
-Update the content of an existing snippet.
+Edit the content of an existing snippet.
 
 ### Syntax
 
 ```bash
-snip update [NAME]
+snip edit [NAME]
 ```
 
 ### Use Cases
 
-#### 1. Update snippet by name
+#### 1. Edit snippet by name
 ```bash
-snip update my_snippet
-snip update module1/snippet_name
+snip edit my_snippet
+snip edit module1/snippet_name
 ```
 - Retrieves existing snippet content
 - Opens editor with existing content as default
 - Save changes or press `Esc` to cancel
 
-#### 2. Interactive update
+#### 2. Interactive edit
 ```bash
-snip update
+snip edit
 ```
 - Shows interactive prompt to select snippet
 - Fuzzy search and tab completion available
 - Then prompts for new content
 
-**Note:** `update` only works for snippets, not modules. Use `rename` to rename modules.
+**Note:** `edit` only works for snippets, not modules. Use `rename` to rename modules.
+
+---
+
+## update
+
+Update Macolint to the latest version from GitHub.
+
+### Syntax
+
+```bash
+snip update
+```
+
+### Use Cases
+
+#### 1. Check and update to latest version
+```bash
+snip update
+```
+
+**What it does:**
+1. Checks your current installed version
+2. Fetches the latest version from GitHub (from releases or main branch)
+3. Compares versions
+4. If an update is available, prompts for confirmation
+5. Upgrades using pip: `pip install --upgrade git+https://github.com/p4puniya/Macolint.git`
+
+**Example output:**
+```
+Current version: 0.1.0
+Checking for updates on GitHub...
+Latest version available: 0.2.0
+Update from 0.1.0 to 0.2.0? [Y/n]: y
+Updating Macolint...
+Macolint updated successfully!
+You may need to reload your shell or restart your terminal.
+```
+
+**Notes:**
+- Requires internet connection to check GitHub
+- Requires pip to be installed and accessible
+- If already on latest version, shows a message and exits
+- After update, you may need to reload your shell or restart your terminal
 
 ---
 
@@ -588,7 +632,8 @@ snip delete -m old_module
 |---------|---------|-------------|
 | `save` | Save snippet or create module | `-m` for modules |
 | `get` | Retrieve snippet | `-m` for browsing, `--raw` for wrapper |
-| `update` | Update snippet content | None |
+| `edit` | Edit snippet content | None |
+| `update` | Update Macolint to latest version | None |
 | `rename` | Rename/move snippet or module | `-m` for modules |
 | `delete` | Delete snippet or module | `-m` for modules |
 | `list` | List snippets and modules | `-m` for specific module |

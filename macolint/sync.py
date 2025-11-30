@@ -28,7 +28,10 @@ def ensure_user_salt(user_id: str, session_token: str) -> bytes:
     sb = get_client()
     
     # Set session for authenticated requests
-    sb.auth.set_session(session_token, None)
+    # Use empty string for refresh_token if not available (Supabase requires string, not None)
+    session = load_session()
+    refresh_token = session.get("refresh_token", "") if session else ""
+    sb.auth.set_session(session_token, refresh_token)
     
     # Try to get existing salt
     try:
@@ -125,7 +128,9 @@ def sync_push(passphrase: str) -> Tuple[int, int]:
         return (0, 0)
     
     sb = get_client()
-    sb.auth.set_session(access_token, None)
+    # Use saved refresh_token or empty string (Supabase requires string, not None)
+    refresh_token = session.get("refresh_token", "") if session else ""
+    sb.auth.set_session(access_token, refresh_token)
     
     pushed_count = 0
     error_count = 0
@@ -153,13 +158,14 @@ def sync_push(passphrase: str) -> Tuple[int, int]:
                 ciphertext, nonce = encrypt(content_bytes, key)
                 
                 # Prepare data for Supabase
+                # Encode bytes to base64 strings for JSON serialization
                 snippet_data = {
                     "user_id": user_id,
                     "module": module,
                     "name": name,
-                    "content_encrypted": ciphertext,  # Supabase handles bytes -> bytea
-                    "nonce": nonce,
-                    "salt": salt  # Store salt per snippet (or use user salt)
+                    "content_encrypted": b64(ciphertext),  # Base64 encode for JSON
+                    "nonce": b64(nonce),  # Base64 encode for JSON
+                    "salt": b64(salt)  # Base64 encode for JSON
                 }
                 
                 # Upsert to Supabase (update if exists, insert if not)
@@ -224,15 +230,14 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
     user_id = session["user"]["id"]
     access_token = session["access_token"]
     
-    # Get user salt
+    # Get user salt (for backward compatibility, but we'll use snippet-specific salt if available)
     with console.status("[cyan]Setting up decryption...[/cyan]"):
-        salt = ensure_user_salt(user_id, access_token)
-    
-    # Derive decryption key
-    key = derive_key(passphrase, salt)
+        user_salt = ensure_user_salt(user_id, access_token)
     
     sb = get_client()
-    sb.auth.set_session(access_token, None)
+    # Use saved refresh_token or empty string (Supabase requires string, not None)
+    refresh_token = session.get("refresh_token", "") if session else ""
+    sb.auth.set_session(access_token, refresh_token)
     
     # Fetch all snippets from Supabase
     try:
@@ -262,6 +267,7 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
                 name = row.get("name")
                 content_encrypted = row["content_encrypted"]
                 nonce = row["nonce"]
+                snippet_salt = row.get("salt")  # Salt stored with this snippet
                 
                 # Build full path
                 if module:
@@ -269,21 +275,171 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
                 else:
                     full_path = name
                 
-                # Handle bytea data - Supabase might return as bytes or base64 string
-                if isinstance(content_encrypted, str):
-                    # Assume base64 encoded
-                    ciphertext = ub64(content_encrypted)
-                else:
-                    ciphertext = content_encrypted
-                
-                if isinstance(nonce, str):
-                    nonce_bytes = ub64(nonce)
-                else:
-                    nonce_bytes = nonce
+                # Handle Supabase returning bytea as {"type":"Buffer","data":[...]}
+                # The column is BYTEA, but we store base64 strings, so Supabase stores
+                # the UTF-8 bytes of the base64 string
+                try:
+                    import re
+                    
+                    def normalize_base64(s: str) -> str:
+                        """Normalize a base64 string by removing invalid characters and fixing padding."""
+                        # Remove all whitespace
+                        s = re.sub(r'\s+', '', s)
+                        # Remove any non-base64 characters
+                        s = re.sub(r'[^A-Za-z0-9+/=]', '', s)
+                        # Remove padding from the end, we'll add it back correctly
+                        data_part = s.rstrip('=')
+                        # Fix padding: base64 strings should be multiples of 4
+                        missing_padding = len(data_part) % 4
+                        if missing_padding:
+                            data_part += '=' * (4 - missing_padding)
+                        return data_part
+                    
+                    def buffer_to_bytes(value):
+                        if isinstance(value, dict) and value.get("type") == "Buffer":
+                            buffer_bytes = bytes(value["data"])
+                            
+                            # Decode as UTF-8 string (the base64 string we stored)
+                            try:
+                                base64_str = buffer_bytes.decode('utf-8')
+                            except UnicodeDecodeError as e:
+                                raise ValueError(
+                                    f"Failed to decode Buffer as UTF-8: {e}. "
+                                    f"Buffer has {len(buffer_bytes)} bytes. "
+                                    f"First 20 bytes: {list(buffer_bytes[:20])}"
+                                ) from e
+                            
+                            # Normalize and decode
+                            try:
+                                normalized = normalize_base64(base64_str)
+                                
+                                if len(normalized) % 4 != 0:
+                                    raise ValueError(
+                                        f"Normalized base64 string length ({len(normalized)}) is not a multiple of 4. "
+                                        f"Original string length: {len(base64_str)}, "
+                                        f"Buffer bytes: {len(buffer_bytes)}"
+                                    )
+                                
+                                # Try to decode, catch base64 errors specifically
+                                try:
+                                    result = ub64(normalized)
+                                    return result
+                                except Exception as decode_err:
+                                    error_str = str(decode_err)
+                                    data_chars = len(normalized.rstrip('='))
+                                    
+                                    # If it's the 137 character error, try to fix it
+                                    if "cannot be 1 more than a multiple of 4" in error_str or (data_chars % 4 == 1):
+                                        # Remove last non-padding character
+                                        if normalized and normalized[-1] != '=':
+                                            fixed = normalized[:-1]
+                                        else:
+                                            # Find last non-padding char
+                                            fixed = normalized.rstrip('=')
+                                            if len(fixed) > 0:
+                                                fixed = fixed[:-1]
+                                        # Re-add padding
+                                        missing_padding = len(fixed) % 4
+                                        if missing_padding:
+                                            fixed += '=' * (4 - missing_padding)
+                                        try:
+                                            result = ub64(fixed)
+                                            return result
+                                        except Exception as e2:
+                                            raise decode_err from e2
+                                    raise
+                            except Exception as e:
+                                raise ValueError(f"Failed to decode base64: {e}") from e
+                        if isinstance(value, str):
+                            import binascii
+                            
+                            # The string from Supabase might be hex-encoded bytes of the base64 string
+                            # Check if it starts with literal \x (escaped backslash-x)
+                            processed_value = value
+                            if value.startswith('\\x'):
+                                # Remove the \x prefix
+                                hex_str = value[2:]
+                                
+                                # Try decoding as hex first (hex representation of UTF-8 bytes of base64 string)
+                                try:
+                                    # Decode hex to get the UTF-8 bytes of the base64 string
+                                    utf8_bytes = bytes.fromhex(hex_str)
+                                    # Decode UTF-8 to get the actual base64 string
+                                    processed_value = utf8_bytes.decode('utf-8')
+                                except Exception:
+                                    # If hex decode fails, treat the hex string itself as base64
+                                    processed_value = hex_str
+                            
+                            base64_str = normalize_base64(processed_value)
+                            
+                            if len(base64_str) % 4 != 0:
+                                raise ValueError(f"Invalid base64 string length: {len(base64_str)} characters")
+                            
+                            # Count non-padding characters
+                            data_chars = len(base64_str.rstrip('='))
+                            
+                            # Try to decode, catch base64 errors specifically
+                            try:
+                                result = ub64(base64_str)
+                                return result
+                            except (Exception, binascii.Error) as decode_err:
+                                error_str = str(decode_err)
+                                
+                                # If it's the 137 character error (or any "1 more than multiple of 4"), try to fix it
+                                if "cannot be 1 more than a multiple of 4" in error_str or (data_chars % 4 == 1):
+                                    # Strategy: Truncate to the nearest multiple of 4 for data chars
+                                    chars_to_remove = data_chars % 4
+                                    if chars_to_remove > 0:
+                                        # Remove from the data part (before padding)
+                                        data_part = base64_str.rstrip('=')
+                                        # Remove the last N characters from data part
+                                        fixed_data = data_part[:-chars_to_remove]
+                                        # Recalculate padding
+                                        missing_padding = len(fixed_data) % 4
+                                        if missing_padding:
+                                            fixed = fixed_data + '=' * (4 - missing_padding)
+                                        else:
+                                            fixed = fixed_data
+                                        
+                                        try:
+                                            result = ub64(fixed)
+                                            return result
+                                        except Exception as e2:
+                                            raise decode_err from e2
+                                raise
+                        if isinstance(value, bytes):
+                            # Try to decode as UTF-8 string first (base64 string)
+                            try:
+                                base64_str = value.decode('utf-8')
+                                base64_str = normalize_base64(base64_str)
+                                if len(base64_str) % 4 != 0:
+                                    raise ValueError(f"Invalid base64 string length: {len(base64_str)} characters")
+                                return ub64(base64_str)
+                            except (UnicodeDecodeError, ValueError):
+                                # If it's not valid UTF-8, assume it's already raw bytes
+                                return value
+                        raise ValueError(f"Unsupported type for encrypted content: {type(value)}")
+
+                    ciphertext = buffer_to_bytes(content_encrypted)
+                    nonce_bytes = buffer_to_bytes(nonce)
+                    
+                    # Handle salt - use snippet-specific salt if available, otherwise fall back to user salt
+                    if snippet_salt:
+                        salt_bytes = buffer_to_bytes(snippet_salt)
+                    else:
+                        salt_bytes = user_salt
+                    
+                    # Derive decryption key for this snippet
+                    snippet_key = derive_key(passphrase, salt_bytes)
+                except Exception as e:
+                    error_count += 1
+                    console.print(f"[red]Invalid encrypted content for '{full_path}': {e}[/red]")
+                    progress.update(task, advance=1)
+                    continue
                 
                 # Decrypt content
                 try:
-                    plaintext_bytes = decrypt(ciphertext, nonce_bytes, key)
+                    plaintext_bytes = decrypt(ciphertext, nonce_bytes, snippet_key)
                     content = plaintext_bytes.decode('utf-8')
                 except Exception as e:
                     error_count += 1

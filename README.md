@@ -110,7 +110,8 @@ snip save <name>          # Save a snippet (supports paths like module1/module2/
 snip save -m <module>     # Create an empty module path (e.g. module1/module2)
 snip get [name]           # Retrieve a snippet (paths work here too)
 snip get -m [module]      # Open interactive module browser (folder-style navigation)
-snip update [name]        # Update snippet content
+snip edit [name]          # Edit snippet content
+snip update                # Update Macolint to latest version from GitHub
 snip rename <old> <new>   # Rename a snippet
 snip rename -m <old> <new> # Rename a module
 snip delete [name]        # Delete a snippet

@@ -20,6 +20,65 @@ from macolint.interactive import (
 db = Database()
 
 
+class MacolintGroup(click.Group):
+    """Custom Click Group that organizes commands into sections in help output."""
+    
+    # Define command categories
+    SNIPPET_COMMANDS = {'save', 'get', 'edit', 'delete', 'rename', 'list'}
+    SETUP_COMMANDS = {'setup', 'doctor', 'update'}
+    CLOUD_SYNC_COMMANDS = {'auth', 'sync', 'set-passphrase'}
+    
+    def format_commands(self, ctx, formatter):
+        """Override to organize commands into sections with headers."""
+        commands = []
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None:
+                continue
+            if cmd.hidden:
+                continue
+            commands.append((subcommand, cmd))
+        
+        if not commands:
+            return
+        
+        # Organize commands into sections
+        snippet_cmds = []
+        setup_cmds = []
+        cloud_sync_cmds = []
+        
+        for name, cmd in commands:
+            if name in self.SNIPPET_COMMANDS:
+                snippet_cmds.append((name, cmd))
+            elif name in self.SETUP_COMMANDS:
+                setup_cmds.append((name, cmd))
+            elif name in self.CLOUD_SYNC_COMMANDS:
+                cloud_sync_cmds.append((name, cmd))
+        
+        # Write sections with headers and spacing
+        with formatter.section('Snippet Commands'):
+            self._write_commands(formatter, snippet_cmds)
+        
+        if setup_cmds:
+            formatter.write('\n')
+            with formatter.section('Setup Commands'):
+                self._write_commands(formatter, setup_cmds)
+        
+        if cloud_sync_cmds:
+            formatter.write('\n')
+            with formatter.section('Cloud Sync Commands'):
+                self._write_commands(formatter, cloud_sync_cmds)
+    
+    def _write_commands(self, formatter, commands):
+        """Helper method to write commands in a section."""
+        if not commands:
+            return
+        limit = formatter.width - 2 - max(len(name) for name, _ in commands)
+        for name, cmd in commands:
+            help = cmd.get_short_help_str(limit)
+            formatter.write_dl([(name, help)])
+
+
 def output_snippet_for_shell_wrapper(content: str):
     """
     Output snippet content cleanly for shell wrapper to capture.
@@ -120,7 +179,7 @@ def output_snippet_to_terminal(content: str, had_interactive_prompt: bool = Fals
         sys.stdout.flush()
 
 
-@click.group()
+@click.group(cls=MacolintGroup)
 @click.version_option(version="0.1.0")
 def cli():
     """Macolint - A cloud-synced terminal snippet manager."""
@@ -470,18 +529,18 @@ def get(name, raw, interactive_name, module_path):
 
 @cli.command()
 @click.argument('name', required=False)
-def update(name):
+def edit(name):
     """
-    Update the content of an existing snippet.
+    Edit the content of an existing snippet.
     
     \b
     USAGE:
-      Update snippet by name:
-        snip update my_snippet
-        snip update module1/snippet_name
+      Edit snippet by name:
+        snip edit my_snippet
+        snip edit module1/snippet_name
     
-      Interactive update (select snippet to update):
-        snip update
+      Interactive edit (select snippet to edit):
+        snip edit
         # Select snippet from list, then edit content
     
     \b
@@ -492,16 +551,16 @@ def update(name):
     
     \b
     EXAMPLES:
-      # Update by name
-      snip update deploy_staging
-      snip update git/commit/template
+      # Edit by name
+      snip edit deploy_staging
+      snip edit git/commit/template
     
       # Interactive selection
-      snip update
+      snip edit
     
     \b
     NOTE:
-      This command only updates snippet content, not names or locations.
+      This command only edits snippet content, not names or locations.
       Use 'snip rename' to rename snippets or move them between modules.
     """
     try:
@@ -539,6 +598,176 @@ def update(name):
             console.print(f"[green]Snippet '{name}' updated successfully.[/green]")
         else:
             console.print(f"[red]Failed to update snippet '{name}'.[/red]")
+            sys.exit(1)
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+def update():
+    """
+    Update Macolint to the latest version from GitHub.
+    
+    \b
+    This command will:
+      1. Check the current installed version
+      2. Fetch the latest version from GitHub
+      3. Compare versions and update if needed
+      4. Reinstall/upgrade using pip
+    
+    \b
+    USAGE:
+      snip update
+    
+    \b
+    EXAMPLES:
+      # Check and update to latest version
+      snip update
+    """
+    import subprocess
+    import re
+    try:
+        from packaging import version
+        has_packaging = True
+    except ImportError:
+        has_packaging = False
+    
+    try:
+        # Get current version
+        from macolint import __version__ as current_version
+        console.print(f"[blue]Current version: {current_version}[/blue]")
+        
+        # Check for latest version from GitHub
+        console.print("[blue]Checking for updates on GitHub...[/blue]")
+        
+        try:
+            import json
+            import ssl
+            
+            # Try using httpx first (better SSL handling)
+            try:
+                import httpx
+                use_httpx = True
+            except ImportError:
+                use_httpx = False
+                import urllib.request
+                import urllib.error
+            
+            # Try to get latest release from GitHub API
+            api_url = "https://api.github.com/repos/p4puniya/Macolint/releases/latest"
+            
+            try:
+                if use_httpx:
+                    response = httpx.get(api_url, timeout=10.0)
+                    # If 404, no releases exist yet, fall back to setup.py
+                    if response.status_code == 404:
+                        raise ValueError("No releases found")
+                    response.raise_for_status()
+                    data = response.json()
+                else:
+                    try:
+                        response = urllib.request.urlopen(api_url, timeout=10)
+                        data = json.loads(response.read().decode())
+                    except urllib.error.HTTPError as http_err:
+                        if http_err.code == 404:
+                            raise ValueError("No releases found")
+                        raise
+                
+                latest_version = data.get('tag_name', '').lstrip('v')
+                if not latest_version:
+                    # Fallback: try to get from main branch setup.py
+                    raise ValueError("No tag found")
+            except (ValueError, KeyError) as e:
+                # Fallback: fetch setup.py from main branch and parse version
+                console.print("[yellow]Could not fetch from releases, checking main branch...[/yellow]")
+                setup_url = "https://raw.githubusercontent.com/p4puniya/Macolint/main/setup.py"
+                
+                if use_httpx:
+                    response = httpx.get(setup_url, timeout=10.0)
+                    response.raise_for_status()
+                    setup_content = response.text
+                else:
+                    response = urllib.request.urlopen(setup_url, timeout=10)
+                    setup_content = response.read().decode()
+                
+                # Extract version from setup.py
+                version_match = re.search(r'version=["\']([^"\']+)["\']', setup_content)
+                if version_match:
+                    latest_version = version_match.group(1)
+                else:
+                    raise ValueError("Could not parse version from setup.py")
+            
+            console.print(f"[blue]Latest version available: {latest_version}[/blue]")
+            
+            # Compare versions
+            needs_update = False
+            if has_packaging:
+                try:
+                    if version.parse(current_version) < version.parse(latest_version):
+                        needs_update = True
+                except Exception:
+                    # Fallback to simple comparison
+                    needs_update = current_version < latest_version
+            else:
+                # Simple string comparison
+                needs_update = current_version < latest_version
+            
+            if not needs_update:
+                console.print("[green]You are already on the latest version![/green]")
+                return
+            
+            # Ask for confirmation
+            if not click.confirm(f"Update from {current_version} to {latest_version}?", default=True):
+                console.print("[yellow]Update cancelled.[/yellow]")
+                return
+            
+            # Find pip command
+            pip_cmd = shutil.which("pip3") or shutil.which("pip")
+            if not pip_cmd:
+                console.print("[red]Error: pip not found. Please install pip first.[/red]")
+                sys.exit(1)
+            
+            # Update Macolint
+            console.print("[blue]Updating Macolint...[/blue]")
+            repo_url = "git+https://github.com/p4puniya/Macolint.git"
+            
+            result = subprocess.run(
+                [pip_cmd, "install", "--upgrade", repo_url],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                console.print("[green]Macolint updated successfully![/green]")
+                console.print("[yellow]You may need to reload your shell or restart your terminal.[/yellow]")
+            else:
+                console.print("[red]Update failed:[/red]")
+                console.print(result.stderr)
+                sys.exit(1)
+                
+        except Exception as e:
+            # Check if it's an SSL/certificate error
+            error_str = str(e).lower()
+            is_ssl_error = (
+                'ssl' in error_str or 
+                'certificate' in error_str or 
+                (hasattr(ssl, 'SSLError') and isinstance(e, ssl.SSLError))
+            )
+            
+            if is_ssl_error:
+                console.print("[red]SSL Certificate Error:[/red]")
+                console.print("[yellow]Python cannot verify GitHub's SSL certificate.[/yellow]")
+                console.print("\n[blue]To fix this on macOS, run:[/blue]")
+                console.print("  [green]python3 -m pip install --upgrade certifi[/green]")
+                console.print("\n[yellow]Or find and run the Install Certificates script:[/yellow]")
+                console.print("  [green]/Applications/Python\\ 3.*/Install\\ Certificates.command[/green]")
+                console.print("\n[blue]Alternative: Update manually using pip:[/blue]")
+                console.print("  [green]pip3 install --upgrade git+https://github.com/p4puniya/Macolint.git[/green]")
+            else:
+                console.print(f"[red]Error: Could not connect to GitHub: {e}[/red]")
+                console.print("[yellow]Please check your internet connection and try again.[/yellow]")
             sys.exit(1)
             
     except Exception as e:
@@ -1480,6 +1709,36 @@ def login():
     try:
         from macolint.auth import login as auth_login
         success = auth_login()
+        if not success:
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@auth.command()
+def signup():
+    """
+    Create a new account for cloud sync.
+    
+    \b
+    This command will:
+    1. Prompt for your email and password
+    2. Create your account in Supabase
+    3. Optionally log you in (if email confirmation is disabled)
+    
+    \b
+    After signing up, you can use:
+      snip sync push    # Upload snippets to cloud
+      snip sync pull    # Download snippets on other devices
+    
+    \b
+    EXAMPLE:
+      snip auth signup
+    """
+    try:
+        from macolint.auth import signup as auth_signup
+        success = auth_signup()
         if not success:
             sys.exit(1)
     except Exception as e:
