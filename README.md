@@ -7,6 +7,7 @@ A cloud-synced terminal snippet manager that helps developers reuse code faster 
 - Save and retrieve code snippets instantly
 - Interactive fuzzy search with tab completion
 - Encrypted local storage
+- **Cloud sync with end-to-end encryption** (new!)
 - Fast CLI interface
 
 ## Quick Install
@@ -119,6 +120,11 @@ snip list -m <module>     # List contents of a specific module
 snip setup                # Automatically set up shell wrapper (recommended!)
 snip setup --fix-path     # Also fix PATH if snip command not found
 snip doctor               # Diagnose installation issues
+snip auth login           # Log in to enable cloud sync
+snip auth logout          # Log out and clear session
+snip sync push            # Push local snippets to cloud (encrypted)
+snip sync pull            # Pull snippets from cloud and decrypt locally
+snip set-passphrase       # Set up encryption passphrase for cloud sync
 ```
 
 ### Module examples
@@ -318,7 +324,190 @@ source ~/.zshrc  # or ~/.bashrc for bash, or ~/.config/fish/config.fish for fish
 
 For more help, run `snip doctor` to get detailed diagnostics.
 
+## Cloud Sync Setup
+
+Macolint now supports cloud sync with end-to-end encryption! Your snippets are encrypted on your device before being uploaded, so only you can decrypt them.
+
+### For Users (Most Common)
+
+**Good news:** If you're using the official Macolint installation, cloud sync is already configured! Just:
+
+1. **Set up your passphrase**:
+   ```bash
+   snip set-passphrase
+   ```
+
+2. **Sign up and log in**:
+   ```bash
+   snip auth login
+   ```
+   This will open your browser where you can sign up with your email (or sign in if you already have an account).
+
+3. **Start syncing**:
+   ```bash
+   snip sync push    # Upload your snippets
+   snip sync pull    # Download snippets on other devices
+   ```
+
+That's it! No Supabase setup required - the Macolint maintainer has already configured the cloud service.
+
+### For Macolint Maintainers (Setting Up the Shared Service)
+
+If you're setting up Macolint's cloud sync service for all users:
+
+1. **Create a Supabase account** (free tier available):
+   - Visit [https://app.supabase.com](https://app.supabase.com)
+   - Create a new project
+
+2. **Configure Supabase**:
+   - In your project, go to **Authentication → Settings**
+   - Enable **Email Magic Link** sign-in
+   - Go to **Project Settings → API**
+   - Copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+
+3. **Set up database schema**:
+   Run this SQL in your Supabase SQL editor:
+
+   ```sql
+   -- users_meta: one row per supabase auth user (stores metadata)
+   CREATE TABLE IF NOT EXISTS users_meta (
+     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+     created_at TIMESTAMPTZ DEFAULT NOW(),
+     last_seen TIMESTAMPTZ DEFAULT NOW(),
+     salt BYTEA  -- Base64-encoded salt for key derivation
+   );
+
+   -- devices table (for device-specific metadata)
+   CREATE TABLE IF NOT EXISTS devices (
+     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+     name TEXT,
+     created_at TIMESTAMPTZ DEFAULT NOW(),
+     last_sync TIMESTAMPTZ
+   );
+
+   -- snippets table
+   CREATE TABLE IF NOT EXISTS snippets (
+     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+     module TEXT,          -- module/folder
+     name TEXT NOT NULL,
+     content_encrypted BYTEA NOT NULL, -- encrypted content
+     nonce BYTEA NOT NULL,              -- AES-GCM nonce/iv
+     salt BYTEA NOT NULL,               -- pbkdf2 salt for this snippet
+     created_at TIMESTAMPTZ DEFAULT NOW(),
+     updated_at TIMESTAMPTZ DEFAULT NOW(),
+     UNIQUE (user_id, module, name)
+   );
+
+   -- Enable Row-Level Security
+   ALTER TABLE snippets ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "Users can manage their snippets"
+     ON snippets
+     FOR ALL
+     USING ( auth.uid() = user_id )
+     WITH CHECK ( auth.uid() = user_id );
+
+   ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "device owner" ON devices FOR ALL 
+     USING (auth.uid() = user_id) 
+     WITH CHECK (auth.uid() = user_id);
+
+   ALTER TABLE users_meta ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY "users meta" ON users_meta FOR ALL 
+     USING (auth.uid() = id) 
+     WITH CHECK (auth.uid() = id);
+   ```
+
+4. **Configure the package with your Supabase credentials**:
+   
+   Edit `macolint/supabase_client.py` and set the default values:
+   
+   ```python
+   DEFAULT_SUPABASE_URL = "https://yourproject.supabase.co"
+   DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+   ```
+   
+   **Security Note:** The Supabase anon key is designed to be public and safe to include in client applications. Security is enforced by Row-Level Security (RLS) policies that ensure users can only access their own data.
+
+5. **Deploy the updated package**:
+   - Users who install Macolint will automatically use your Supabase instance
+   - Users can still override with their own `.env` file if they want a private instance
+
+### For Advanced Users (Using Your Own Supabase Instance)
+
+If you prefer to use your own Supabase project instead of the shared service:
+
+1. Create your own Supabase project (follow steps 1-3 above)
+2. Create a `.env` file in your project root or `~/.macolint/`:
+
+   ```bash
+   SUPABASE_URL=https://yourproject.supabase.co
+   SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+   ```
+
+   This will override the default shared service.
+
+### Getting Started with Cloud Sync (For End Users)
+
+1. **Set up your passphrase**:
+   ```bash
+   snip set-passphrase
+   ```
+   This passphrase is used to encrypt your snippets. **Remember it** - you'll need it to decrypt snippets on other devices!
+
+2. **Log in**:
+   ```bash
+   snip auth login
+   ```
+   This will open your browser for authentication. Follow the instructions to copy your access token.
+
+3. **Push your snippets to the cloud**:
+   ```bash
+   snip sync push
+   ```
+   Enter your passphrase when prompted. Your snippets will be encrypted and uploaded.
+
+4. **On another device, pull your snippets**:
+   ```bash
+   snip auth login      # Log in with the same account
+   snip sync pull       # Enter the same passphrase
+   ```
+
+### How It Works
+
+- **End-to-End Encryption**: Your snippets are encrypted using AES-256-GCM with a key derived from your passphrase using PBKDF2 (200,000 iterations). The passphrase never leaves your device.
+- **Local-First**: Snippets are always saved locally first. Cloud sync is optional and manual.
+- **Security**: Even if someone gains access to your Supabase database, they cannot decrypt your snippets without your passphrase.
+
+### Security Notes
+
+- **Passphrase Management**: Your passphrase is never stored. If you forget it, you cannot recover your encrypted snippets. Consider using a password manager.
+- **Token Storage**: Your authentication token is stored locally in `~/.macolint/session.json` with restricted permissions (600).
+- **Salt Storage**: Each user has a unique salt stored in the database (not secret, used for key derivation).
+
+### Troubleshooting Cloud Sync
+
+**"Not logged in" error:**
+- Run `snip auth login` to authenticate
+
+**"Supabase is not configured" error:**
+- If you're a regular user: The Macolint maintainer needs to configure the shared service. Contact them or use your own Supabase instance.
+- If you're using your own instance: Make sure your `.env` file exists with `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+- Check that the file is in the correct location (project root or `~/.macolint/`)
+
+**Decryption failures:**
+- Verify you're using the correct passphrase
+- The passphrase must match exactly (case-sensitive)
+
+**"Failed to fetch snippets" error:**
+- Check your internet connection
+- Verify your Supabase project is active
+- Make sure RLS policies are correctly configured
+
 ## MVP Status
 
-Currently supports local storage with encryption. Cloud sync and team sharing coming in Phase 2.
+✅ Local storage with encryption  
+✅ Cloud sync with end-to-end encryption  
+🚧 Team sharing (coming in Phase 2)
 

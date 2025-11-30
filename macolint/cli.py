@@ -217,6 +217,15 @@ def save(name, module_path):
             console.print(f"[green]Snippet '{name}' saved successfully.[/green]")
         else:
             console.print(f"[yellow]Snippet '{name}' updated successfully.[/yellow]")
+        
+        # Show sync hint if authenticated
+        try:
+            from macolint.auth import is_authenticated
+            if is_authenticated():
+                console.print("[dim]Run 'snip sync push' to sync to cloud[/dim]")
+        except Exception:
+            # Ignore errors in sync hint (auth might not be configured)
+            pass
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -398,8 +407,47 @@ def get(name, raw, interactive_name, module_path):
             if raw:
                 # In raw mode, output nothing on error
                 sys.exit(1)
-            console.print(f"[red]Snippet '{name}' not found.[/red]")
-            sys.exit(1)
+            
+            # Check if user is authenticated and prompt for cloud pull
+            try:
+                from macolint.auth import is_authenticated
+                if is_authenticated():
+                    console.print(f"[yellow]Snippet '{name}' not found locally.[/yellow]")
+                    if click.confirm("Pull from cloud?", default=False):
+                        try:
+                            from macolint.sync import sync_pull
+                            import getpass
+                            
+                            passphrase = getpass.getpass("Enter passphrase to decrypt snippets: ")
+                            if passphrase:
+                                pulled, errors = sync_pull(passphrase)
+                                if pulled > 0:
+                                    console.print(f"[green]Pulled {pulled} snippets from cloud.[/green]")
+                                    # Try to get the snippet again
+                                    snippet = db.get_snippet(name)
+                                    if snippet is None:
+                                        console.print(f"[red]Snippet '{name}' still not found after sync.[/red]")
+                                        sys.exit(1)
+                                    # Continue to output snippet below
+                                else:
+                                    console.print(f"[yellow]No snippets pulled. Snippet '{name}' not found.[/yellow]")
+                                    sys.exit(1)
+                            else:
+                                console.print("[yellow]Passphrase required. Cancelled.[/yellow]")
+                                sys.exit(1)
+                        except Exception as e:
+                            console.print(f"[red]Error pulling from cloud: {e}[/red]")
+                            sys.exit(1)
+                    else:
+                        console.print(f"[red]Snippet '{name}' not found.[/red]")
+                        sys.exit(1)
+                else:
+                    console.print(f"[red]Snippet '{name}' not found.[/red]")
+                    sys.exit(1)
+            except Exception:
+                # If auth check fails, just show not found
+                console.print(f"[red]Snippet '{name}' not found.[/red]")
+                sys.exit(1)
 
         # Output the snippet content
         # If --raw flag is set, output without newline (for shell wrapper)
@@ -1401,6 +1449,221 @@ def _fix_path_in_shell_config(shell: str, scripts_path: Path):
     console.print(f"[green]✓ Added {scripts_path} to PATH in {config_file}[/green]")
     console.print("[yellow]Reload your shell config or restart terminal for changes to take effect.[/yellow]")
     return True
+
+
+@cli.group()
+def auth():
+    """Authentication commands for cloud sync."""
+    pass
+
+
+@auth.command()
+def login():
+    """
+    Log in to enable cloud sync.
+    
+    \b
+    This command will:
+    1. Open your browser to Supabase authentication
+    2. Guide you through copying your access token
+    3. Store your session securely for cloud sync
+    
+    \b
+    After logging in, you can use:
+      snip sync push    # Upload snippets to cloud
+      snip sync pull    # Download snippets from cloud
+    
+    \b
+    EXAMPLE:
+      snip auth login
+    """
+    try:
+        from macolint.auth import login as auth_login
+        success = auth_login()
+        if not success:
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@auth.command()
+def logout():
+    """
+    Log out and clear local session.
+    
+    \b
+    This will remove your authentication session.
+    You'll need to log in again to use cloud sync.
+    
+    \b
+    EXAMPLE:
+      snip auth logout
+    """
+    try:
+        from macolint.auth import logout as auth_logout
+        auth_logout()
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.group()
+def sync():
+    """Cloud sync commands."""
+    pass
+
+
+@sync.command()
+def push():
+    """
+    Push local snippets to the cloud (encrypted).
+    
+    \b
+    This command will:
+    1. Encrypt all local snippets using your passphrase
+    2. Upload them to Supabase
+    3. Show a summary of what was synced
+    
+    \b
+    You must be logged in (run 'snip auth login' first).
+    You'll be prompted for your passphrase.
+    
+    \b
+    EXAMPLE:
+      snip sync push
+    """
+    try:
+        from macolint.auth import is_authenticated
+        from macolint.sync import sync_push
+        import getpass
+        
+        if not is_authenticated():
+            console.print("[red]Error: Not logged in.[/red]")
+            console.print("[yellow]Run 'snip auth login' first.[/yellow]")
+            sys.exit(1)
+        
+        # Prompt for passphrase
+        passphrase = getpass.getpass("Enter passphrase to encrypt snippets: ")
+        if not passphrase:
+            console.print("[red]Error: Passphrase cannot be empty.[/red]")
+            sys.exit(1)
+        
+        # Push snippets
+        pushed, errors = sync_push(passphrase)
+        
+        if errors > 0:
+            console.print(f"\n[yellow]Pushed {pushed} snippets with {errors} errors.[/yellow]")
+        else:
+            console.print(f"\n[green]✓ Successfully pushed {pushed} snippets to cloud.[/green]")
+        
+        if pushed == 0 and errors == 0:
+            console.print("[yellow]No snippets to sync.[/yellow]")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@sync.command()
+def pull():
+    """
+    Pull snippets from the cloud and decrypt locally.
+    
+    \b
+    This command will:
+    1. Download all your encrypted snippets from Supabase
+    2. Decrypt them using your passphrase
+    3. Save them to your local database
+    
+    \b
+    You must be logged in (run 'snip auth login' first).
+    You'll be prompted for your passphrase.
+    
+    \b
+    EXAMPLE:
+      snip sync pull
+    """
+    try:
+        from macolint.auth import is_authenticated
+        from macolint.sync import sync_pull
+        import getpass
+        
+        if not is_authenticated():
+            console.print("[red]Error: Not logged in.[/red]")
+            console.print("[yellow]Run 'snip auth login' first.[/yellow]")
+            sys.exit(1)
+        
+        # Prompt for passphrase
+        passphrase = getpass.getpass("Enter passphrase to decrypt snippets: ")
+        if not passphrase:
+            console.print("[red]Error: Passphrase cannot be empty.[/red]")
+            sys.exit(1)
+        
+        # Pull snippets
+        pulled, errors = sync_pull(passphrase)
+        
+        if errors > 0:
+            console.print(f"\n[yellow]Pulled {pulled} snippets with {errors} errors.[/yellow]")
+            if errors > 0:
+                console.print("[yellow]Some snippets failed to decrypt. Check your passphrase.[/yellow]")
+        else:
+            console.print(f"\n[green]✓ Successfully pulled {pulled} snippets from cloud.[/green]")
+        
+        if pulled == 0 and errors == 0:
+            console.print("[yellow]No snippets found on server.[/yellow]")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+def set_passphrase():
+    """
+    Set up your encryption passphrase for cloud sync.
+    
+    \b
+    This command helps you set up a passphrase that will be used to
+    encrypt your snippets before uploading to the cloud.
+    
+    \b
+    IMPORTANT:
+    - Your passphrase is NEVER stored or sent to the server
+    - You must remember it to decrypt snippets on other devices
+    - If you forget it, you cannot recover your encrypted snippets
+    
+    \b
+    EXAMPLE:
+      snip set-passphrase
+    """
+    try:
+        import getpass
+        
+        console.print("[bold]Set up encryption passphrase[/bold]\n")
+        console.print("[yellow]This passphrase will be used to encrypt your snippets.[/yellow]")
+        console.print("[yellow]You must remember it to decrypt snippets on other devices.[/yellow]\n")
+        
+        passphrase1 = getpass.getpass("Enter passphrase: ")
+        if not passphrase1:
+            console.print("[red]Error: Passphrase cannot be empty.[/red]")
+            sys.exit(1)
+        
+        passphrase2 = getpass.getpass("Confirm passphrase: ")
+        if passphrase1 != passphrase2:
+            console.print("[red]Error: Passphrases do not match.[/red]")
+            sys.exit(1)
+        
+        console.print("\n[green]✓ Passphrase set successfully![/green]")
+        console.print("[yellow]Remember: You'll need this passphrase to sync snippets across devices.[/yellow]")
+        console.print("[yellow]Your passphrase is not stored - you must remember it.[/yellow]")
+        
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
 
 
 @cli.command()

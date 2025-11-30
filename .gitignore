@@ -52,6 +52,7 @@ htmlcov/
 .macolint/
 *.db
 *.db-journal
+.env
 
 # Temporary files
 *.tmp
