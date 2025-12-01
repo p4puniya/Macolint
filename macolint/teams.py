@@ -190,27 +190,114 @@ def get_team_by_name(name: str) -> Optional[Team]:
         raise RuntimeError(f"Failed to get team: {e}")
 
 
+def get_user_id_by_email(user_email: str) -> Optional[str]:
+    """
+    Get user ID (UUID) by email address.
+    
+    This function queries Supabase auth.users table to find the user ID.
+    Uses a database function if available, otherwise provides helpful error.
+    
+    Args:
+        user_email: Email address of the user
+    
+    Returns:
+        User ID (UUID) if found, None otherwise
+    
+    Raises:
+        RuntimeError: If not authenticated or lookup fails
+    """
+    if not is_authenticated():
+        raise RuntimeError("Not logged in. Run 'snip auth login' first.")
+    
+    session = load_session()
+    if not session:
+        raise RuntimeError("Session not found. Please log in again.")
+    
+    # Get authenticated client
+    sb = get_authenticated_client()
+    
+    # Normalize email (lowercase, trim)
+    normalized_email = user_email.lower().strip()
+    
+    # Try to look up user by email using database function
+    try:
+        # Call the database function to get user ID by email
+        # PostgREST expects the parameter name to match exactly
+        response = sb.rpc('get_user_id_by_email', {'user_email': normalized_email}).execute()
+        
+        # Supabase RPC functions that return a single value return it directly
+        # But sometimes it's wrapped in a list or dict, so handle both cases
+        user_id = response.data
+        
+        # Handle different response formats
+        if user_id is None:
+            raise RuntimeError(
+                f"User with email '{user_email}' not found. "
+                "They must register an account first using 'snip auth signup'."
+            )
+        
+        # If it's a list, get the first element
+        if isinstance(user_id, list):
+            user_id = user_id[0] if len(user_id) > 0 else None
+        
+        # If it's a dict, try to get the value
+        if isinstance(user_id, dict):
+            user_id = user_id.get('get_user_id_by_email') or user_id.get('id') or user_id.get('user_id')
+        
+        if not user_id:
+            raise RuntimeError(
+                f"User with email '{user_email}' not found. "
+                "They must register an account first using 'snip auth signup'."
+            )
+        
+        return str(user_id)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        # Check if it's a function not found error
+        if "PGRST202" in error_msg or "Could not find the function" in error_msg or "schema cache" in error_msg.lower():
+            # Provide clear instructions
+            console.print("\n[red]Error: Database function not found.[/red]")
+            console.print("\n[yellow]To fix this, run the following SQL in your Supabase SQL Editor:[/yellow]")
+            console.print("\n[cyan]1. Open Supabase Dashboard → SQL Editor[/cyan]")
+            console.print("[cyan]2. Copy and paste the contents of: get_user_by_email_function.sql[/cyan]")
+            console.print("[cyan]3. Click 'Run' to execute the SQL[/cyan]")
+            console.print("\n[dim]This will create the function needed to look up users by email.[/dim]\n")
+            raise RuntimeError(
+                "Database function 'get_user_id_by_email' not found. "
+                "Please run 'get_user_by_email_function.sql' in your Supabase SQL Editor. "
+                "See instructions above."
+            )
+        if "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+            raise RuntimeError(
+                f"User with email '{user_email}' not found. "
+                "They must register an account first using 'snip auth signup'."
+            )
+        raise RuntimeError(f"Failed to look up user by email: {e}")
+
+
 def add_team_member(team_id: str, user_email: str) -> bool:
     """
-    Add a user to a team by email.
-    Note: This requires the user to provide their UUID since Supabase client
-    doesn't expose email-to-UUID lookup. Use add_team_member_by_id instead.
+    Add a user to a team by email address.
     
     Args:
         team_id: Team ID
-        user_email: Email of user to add (not used, kept for API compatibility)
+        user_email: Email address of the user to add
     
     Returns:
         True if successful, False otherwise
     
     Raises:
-        RuntimeError: Always raises, directing user to use UUID instead
+        RuntimeError: If not authenticated, user not found, or operation fails
     """
-    raise RuntimeError(
-        "Adding members by email is not supported. "
-        "Please use the user's UUID with add_team_member_by_id, "
-        "or use 'snip team add <team_name> <user_uuid>' command."
-    )
+    # Get user ID from email
+    user_id = get_user_id_by_email(user_email)
+    if not user_id:
+        raise RuntimeError(f"User with email '{user_email}' not found. They must register first.")
+    
+    # Use the existing add_team_member_by_id function
+    return add_team_member_by_id(team_id, user_id)
 
 
 def add_team_member_by_id(team_id: str, user_id: str) -> bool:

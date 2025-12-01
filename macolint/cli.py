@@ -2058,30 +2058,30 @@ def members(team_name):
 
 @team.command()
 @click.argument('team_name')
-@click.argument('user_id')
-def add(team_name, user_id):
+@click.argument('user_email')
+def add(team_name, user_email):
     """
-    Add a user to a team.
+    Add a user to a team by email address.
     
     \b
     You must be the team creator to add members.
-    The user_id should be the UUID of the user to add.
+    The user_email should be the email address of a registered user.
     
     \b
     EXAMPLE:
-      snip team add dev-team 12345678-1234-1234-1234-123456789abc
+      snip team add dev-team user@example.com
     """
     try:
-        from macolint.teams import get_team_by_name, add_team_member_by_id
+        from macolint.teams import get_team_by_name, add_team_member
         
         team = get_team_by_name(team_name)
         if team is None:
             console.print(f"[red]Error: Team '{team_name}' not found or you are not a member.[/red]")
             sys.exit(1)
         
-        success = add_team_member_by_id(team.id, user_id)
+        success = add_team_member(team.id, user_email)
         if success:
-            console.print(f"[green]✓ User '{user_id}' added to team '{team_name}'.[/green]")
+            console.print(f"[green]✓ User '{user_email}' added to team '{team_name}'.[/green]")
         else:
             console.print(f"[red]Failed to add user to team.[/red]")
             sys.exit(1)
