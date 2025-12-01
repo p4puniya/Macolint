@@ -249,7 +249,11 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
     if not remote_snippets:
         console.print("[yellow]No snippets found on server.[/yellow]")
         return (0, 0)
-    
+
+    # Collect existing local snippet paths so we don't pull duplicates.
+    # We use the same full-path convention as elsewhere (e.g. "module/name").
+    local_paths = set(db.list_snippets())
+
     pulled_count = 0
     error_count = 0
     
@@ -274,6 +278,12 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
                     full_path = f"{module}/{name}"
                 else:
                     full_path = name
+
+                # Skip snippets that already exist locally (by full path / name).
+                # We do not overwrite or create duplicates in this case.
+                if full_path in local_paths:
+                    progress.update(task, advance=1)
+                    continue
                 
                 # Handle Supabase returning bytea as {"type":"Buffer","data":[...]}
                 # The column is BYTEA, but we store base64 strings, so Supabase stores
