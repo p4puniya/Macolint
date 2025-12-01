@@ -8,9 +8,11 @@ macolint/crypto.py
 macolint/database.py
 macolint/interactive.py
 macolint/models.py
+macolint/sharing.py
 macolint/storage.py
 macolint/supabase_client.py
 macolint/sync.py
+macolint/teams.py
 macolint.egg-info/PKG-INFO
 macolint.egg-info/SOURCES.txt
 macolint.egg-info/dependency_links.txt

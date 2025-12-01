@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from macolint.supabase_client import get_client
+from macolint.supabase_client import get_client, get_authenticated_client
 from macolint.crypto import derive_key, encrypt, decrypt, gen_salt, b64, ub64
 from macolint.storage import load_session
 from macolint.database import Database
@@ -25,13 +25,9 @@ def ensure_user_salt(user_id: str, session_token: str) -> bytes:
     Returns:
         Salt bytes (16 bytes)
     """
-    sb = get_client()
-    
-    # Set session for authenticated requests
-    # Use empty string for refresh_token if not available (Supabase requires string, not None)
-    session = load_session()
-    refresh_token = session.get("refresh_token", "") if session else ""
-    sb.auth.set_session(session_token, refresh_token)
+    # Get authenticated client (ensures JWT is properly set)
+    # Note: ensure_user_salt is called with session_token, but we'll use the session from storage
+    sb = get_authenticated_client()
     
     # Try to get existing salt
     try:
@@ -90,12 +86,53 @@ def list_all_local_snippets() -> List[Tuple[str, str]]:
     return snippets
 
 
-def sync_push(passphrase: str) -> Tuple[int, int]:
+def list_shared_snippets_for_team(team_id: str) -> List[Tuple[str, str]]:
+    """
+    List local shared snippets that should be pushed to a team.
+    
+    Args:
+        team_id: Team ID
+    
+    Returns:
+        List of tuples (full_path, content) for shared snippets
+    """
+    shared_paths = db.get_shared_snippets()
+    snippets = []
+    
+    for path in shared_paths:
+        snippet = db.get_snippet(path)
+        if snippet and snippet.is_shared:
+            snippets.append((path, snippet.content))
+    
+    return snippets
+
+
+def list_personal_snippets() -> List[Tuple[str, str]]:
+    """
+    List local personal snippets (not shared).
+    
+    Returns:
+        List of tuples (full_path, content) for personal snippets
+    """
+    all_paths = db.list_snippets()
+    snippets = []
+    
+    for path in all_paths:
+        snippet = db.get_snippet(path)
+        if snippet and not snippet.is_shared:
+            snippets.append((path, snippet.content))
+    
+    return snippets
+
+
+def sync_push(passphrase: str, team_id: Optional[str] = None) -> Tuple[int, int]:
     """
     Push local snippets to Supabase (encrypted).
     
     Args:
         passphrase: User passphrase for encryption
+        team_id: Optional team ID. If provided, pushes only shared snippets for that team.
+                 If None, pushes only personal snippets (team_id IS NULL).
     
     Returns:
         Tuple of (pushed_count, error_count)
@@ -120,17 +157,23 @@ def sync_push(passphrase: str) -> Tuple[int, int]:
     # Derive encryption key
     key = derive_key(passphrase, salt)
     
-    # Get all local snippets
-    local_snippets = list_all_local_snippets()
+    # Get local snippets based on team_id
+    if team_id:
+        # Push only shared snippets for this team
+        local_snippets = list_shared_snippets_for_team(team_id)
+    else:
+        # Push only personal snippets (not shared)
+        local_snippets = list_personal_snippets()
     
     if not local_snippets:
-        console.print("[yellow]No local snippets to sync.[/yellow]")
+        if team_id:
+            console.print("[yellow]No shared snippets to sync for this team.[/yellow]")
+        else:
+            console.print("[yellow]No local snippets to sync.[/yellow]")
         return (0, 0)
     
-    sb = get_client()
-    # Use saved refresh_token or empty string (Supabase requires string, not None)
-    refresh_token = session.get("refresh_token", "") if session else ""
-    sb.auth.set_session(access_token, refresh_token)
+    # Get authenticated client (ensures JWT is properly set)
+    sb = get_authenticated_client()
     
     pushed_count = 0
     error_count = 0
@@ -167,6 +210,13 @@ def sync_push(passphrase: str) -> Tuple[int, int]:
                     "nonce": b64(nonce),  # Base64 encode for JSON
                     "salt": b64(salt)  # Base64 encode for JSON
                 }
+                
+                # Add team_id if pushing to team space
+                if team_id:
+                    snippet_data["team_id"] = team_id
+                else:
+                    # Explicitly set team_id to NULL for personal snippets
+                    snippet_data["team_id"] = None
                 
                 # Upsert to Supabase (update if exists, insert if not)
                 # Note: Supabase upsert uses the unique constraint automatically
@@ -207,12 +257,14 @@ def sync_push(passphrase: str) -> Tuple[int, int]:
     return (pushed_count, error_count)
 
 
-def sync_pull(passphrase: str) -> Tuple[int, int]:
+def sync_pull(passphrase: str, team_id: Optional[str] = None) -> Tuple[int, int]:
     """
     Pull snippets from Supabase and decrypt into local database.
     
     Args:
         passphrase: User passphrase for decryption
+        team_id: Optional team ID. If provided, pulls only snippets for that team.
+                 If None, pulls only personal snippets (team_id IS NULL).
     
     Returns:
         Tuple of (pulled_count, error_count)
@@ -234,20 +286,29 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
     with console.status("[cyan]Setting up decryption...[/cyan]"):
         user_salt = ensure_user_salt(user_id, access_token)
     
-    sb = get_client()
-    # Use saved refresh_token or empty string (Supabase requires string, not None)
-    refresh_token = session.get("refresh_token", "") if session else ""
-    sb.auth.set_session(access_token, refresh_token)
+    # Get authenticated client (ensures JWT is properly set)
+    sb = get_authenticated_client()
     
-    # Fetch all snippets from Supabase
+    # Fetch snippets from Supabase based on team_id
     try:
-        response = sb.table("snippets").select("*").eq("user_id", user_id).execute()
+        query = sb.table("snippets").select("*")
+        if team_id:
+            # Pull team snippets
+            query = query.eq("team_id", team_id)
+        else:
+            # Pull personal snippets (team_id IS NULL)
+            query = query.is_("team_id", "null")
+        
+        response = query.execute()
         remote_snippets = response.data
     except Exception as e:
         raise RuntimeError(f"Failed to fetch snippets from server: {e}")
     
     if not remote_snippets:
-        console.print("[yellow]No snippets found on server.[/yellow]")
+        if team_id:
+            console.print("[yellow]No snippets found on server for this team.[/yellow]")
+        else:
+            console.print("[yellow]No snippets found on server.[/yellow]")
         return (0, 0)
 
     # Collect existing local snippet paths so we don't pull duplicates.
@@ -460,6 +521,10 @@ def sync_pull(passphrase: str) -> Tuple[int, int]:
                 
                 # Save to local database
                 db.save_snippet(full_path, content)
+                
+                # Mark as shared if pulling from team space
+                if team_id:
+                    db.mark_snippet_shared(full_path, True)
                 
                 pulled_count += 1
                 progress.update(task, advance=1)

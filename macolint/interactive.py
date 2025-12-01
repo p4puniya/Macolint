@@ -268,8 +268,12 @@ def display_snippet_list(snippets: List[str], keyword: Optional[str] = None):
     table = Table(title="Snippets" + (f" (filtered: {keyword})" if keyword else ""))
     table.add_column("Name", style="cyan")
     
+    db = Database()
     for snippet_name in snippets:
-        table.add_row(snippet_name)
+        # Check if snippet is shared and add (*) indicator
+        is_shared = db.is_snippet_shared(snippet_name)
+        display_name = f"{snippet_name}*" if is_shared else snippet_name
+        table.add_row(display_name)
     
     console.print(table)
 
@@ -438,11 +442,14 @@ def browse_module_tree(db: Database, root_module_path: Optional[str] = None) -> 
 
         for full_path in child_snippets:
             base_name = full_path.split("/")[-1]
-            label = base_name
+            # Check if snippet is shared and add (*) indicator
+            is_shared = db.is_snippet_shared(full_path)
+            display_base = f"{base_name}*" if is_shared else base_name
+            label = display_base
             # Avoid clobbering module labels; snippets and modules can share base names but
             # our schema keeps (parent_id, name) unique, so this is safe within a module.
             if label in value_map:
-                label = full_path
+                label = f"{full_path}*" if is_shared else full_path
             choices.append(label)
             value_map[label] = ("snippet", full_path)
 
@@ -489,9 +496,12 @@ def browse_module_tree(db: Database, root_module_path: Optional[str] = None) -> 
             continue
 
         selection = selection.strip()
+        # Strip (*) indicator if present for matching
+        selection_clean = selection.rstrip('*')
+        
         if selection not in value_map:
             # Try fuzzy match using our own fuzzy_match helper
-            matches = fuzzy_match(selection, list(value_map.keys()))
+            matches = fuzzy_match(selection_clean, list(value_map.keys()))
             if not matches:
                 console.print(f"[red]No match for '{selection}'.[/red]")
                 continue

@@ -27,6 +27,7 @@ class MacolintGroup(click.Group):
     SNIPPET_COMMANDS = {'save', 'get', 'edit', 'delete', 'rename', 'list'}
     SETUP_COMMANDS = {'setup', 'doctor', 'update'}
     CLOUD_SYNC_COMMANDS = {'auth', 'sync', 'set-passphrase'}
+    TEAM_COMMANDS = {'team', 'share', 'unshare'}
     
     def format_commands(self, ctx, formatter):
         """Override to organize commands into sections with headers."""
@@ -46,6 +47,7 @@ class MacolintGroup(click.Group):
         snippet_cmds = []
         setup_cmds = []
         cloud_sync_cmds = []
+        team_cmds = []
         
         for name, cmd in commands:
             if name in self.SNIPPET_COMMANDS:
@@ -54,10 +56,17 @@ class MacolintGroup(click.Group):
                 setup_cmds.append((name, cmd))
             elif name in self.CLOUD_SYNC_COMMANDS:
                 cloud_sync_cmds.append((name, cmd))
+            elif name in self.TEAM_COMMANDS:
+                team_cmds.append((name, cmd))
         
         # Write sections with headers and spacing
         with formatter.section('Snippet Commands'):
             self._write_commands(formatter, snippet_cmds)
+        
+        if team_cmds:
+            formatter.write('\n')
+            with formatter.section('Team Commands'):
+                self._write_commands(formatter, team_cmds)
         
         if setup_cmds:
             formatter.write('\n')
@@ -1109,9 +1118,17 @@ def list(keyword, module_path):
             snippet_paths = [s for s in snippet_paths if keyword_lower in s.lower()]
         
         # Show modules with a trailing "/" to distinguish them
-        entries = [f"{m}/" for m in module_paths] + snippet_paths
+        # Add (*) indicator to shared snippets
+        display_entries = []
+        for m in module_paths:
+            display_entries.append(f"{m}/")
+        for snippet_path in snippet_paths:
+            is_shared = db.is_snippet_shared(snippet_path)
+            display_name = f"{snippet_path}*" if is_shared else snippet_path
+            display_entries.append(display_name)
+        
         # Stable sort so modules and snippets are mixed alphabetically
-        entries = sorted(entries)
+        display_entries = sorted(display_entries)
 
         # Build title to show which module we're listing
         if target_module is None:
@@ -1121,7 +1138,7 @@ def list(keyword, module_path):
             title = f"Snippets in {module_full_path}" + (f" (filtered: {keyword})" if keyword else "")
         
         # Use a custom display function or modify the existing one
-        if not entries:
+        if not display_entries:
             if keyword:
                 console.print(f"[yellow]No items found matching '{keyword}' in '{module_full_path if target_module else '/'}'.[/yellow]")
             else:
@@ -1132,7 +1149,7 @@ def list(keyword, module_path):
             from rich.text import Text
             table = Table(title=title)
             table.add_column("Name", style="cyan")
-            for entry in entries:
+            for entry in display_entries:
                 # Modules (ending with /) in yellow, snippets in cyan
                 if entry.endswith("/"):
                     table.add_row(Text(entry, style="yellow"))
@@ -1774,7 +1791,8 @@ def sync():
 
 
 @sync.command()
-def push():
+@click.option('--team', 'team_name', required=False, help='Push shared snippets to team space')
+def push(team_name):
     """
     Push local snippets to the cloud (encrypted).
     
@@ -1789,18 +1807,32 @@ def push():
     You'll be prompted for your passphrase.
     
     \b
-    EXAMPLE:
-      snip sync push
+    OPTIONS:
+      --team TEAM_NAME    Push shared snippets to team space instead of personal space
+    
+    \b
+    EXAMPLES:
+      snip sync push              # Push personal snippets
+      snip sync push --team dev   # Push shared snippets to 'dev' team
     """
     try:
         from macolint.auth import is_authenticated
         from macolint.sync import sync_push
+        from macolint.teams import get_team_by_name
         import getpass
         
         if not is_authenticated():
             console.print("[red]Error: Not logged in.[/red]")
             console.print("[yellow]Run 'snip auth login' first.[/yellow]")
             sys.exit(1)
+        
+        team_id = None
+        if team_name:
+            team = get_team_by_name(team_name)
+            if team is None:
+                console.print(f"[red]Error: Team '{team_name}' not found or you are not a member.[/red]")
+                sys.exit(1)
+            team_id = team.id
         
         # Prompt for passphrase
         passphrase = getpass.getpass("Enter passphrase to encrypt snippets: ")
@@ -1809,15 +1841,21 @@ def push():
             sys.exit(1)
         
         # Push snippets
-        pushed, errors = sync_push(passphrase)
+        pushed, errors = sync_push(passphrase, team_id=team_id)
         
         if errors > 0:
             console.print(f"\n[yellow]Pushed {pushed} snippets with {errors} errors.[/yellow]")
         else:
-            console.print(f"\n[green]✓ Successfully pushed {pushed} snippets to cloud.[/green]")
+            if team_name:
+                console.print(f"\n[green]✓ Successfully pushed {pushed} shared snippets to team '{team_name}'.[/green]")
+            else:
+                console.print(f"\n[green]✓ Successfully pushed {pushed} snippets to cloud.[/green]")
         
         if pushed == 0 and errors == 0:
-            console.print("[yellow]No snippets to sync.[/yellow]")
+            if team_name:
+                console.print("[yellow]No shared snippets to sync for this team.[/yellow]")
+            else:
+                console.print("[yellow]No snippets to sync.[/yellow]")
             
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -1825,7 +1863,8 @@ def push():
 
 
 @sync.command()
-def pull():
+@click.option('--team', 'team_name', required=False, help='Pull shared snippets from team space')
+def pull(team_name):
     """
     Pull snippets from the cloud and decrypt locally.
     
@@ -1840,18 +1879,32 @@ def pull():
     You'll be prompted for your passphrase.
     
     \b
-    EXAMPLE:
-      snip sync pull
+    OPTIONS:
+      --team TEAM_NAME    Pull shared snippets from team space instead of personal space
+    
+    \b
+    EXAMPLES:
+      snip sync pull              # Pull personal snippets
+      snip sync pull --team dev   # Pull shared snippets from 'dev' team
     """
     try:
         from macolint.auth import is_authenticated
         from macolint.sync import sync_pull
+        from macolint.teams import get_team_by_name
         import getpass
         
         if not is_authenticated():
             console.print("[red]Error: Not logged in.[/red]")
             console.print("[yellow]Run 'snip auth login' first.[/yellow]")
             sys.exit(1)
+        
+        team_id = None
+        if team_name:
+            team = get_team_by_name(team_name)
+            if team is None:
+                console.print(f"[red]Error: Team '{team_name}' not found or you are not a member.[/red]")
+                sys.exit(1)
+            team_id = team.id
         
         # Prompt for passphrase
         passphrase = getpass.getpass("Enter passphrase to decrypt snippets: ")
@@ -1860,18 +1913,251 @@ def pull():
             sys.exit(1)
         
         # Pull snippets
-        pulled, errors = sync_pull(passphrase)
+        pulled, errors = sync_pull(passphrase, team_id=team_id)
         
         if errors > 0:
             console.print(f"\n[yellow]Pulled {pulled} snippets with {errors} errors.[/yellow]")
             if errors > 0:
                 console.print("[yellow]Some snippets failed to decrypt. Check your passphrase.[/yellow]")
         else:
-            console.print(f"\n[green]✓ Successfully pulled {pulled} snippets from cloud.[/green]")
+            if team_name:
+                console.print(f"\n[green]✓ Successfully pulled {pulled} shared snippets from team '{team_name}'.[/green]")
+            else:
+                console.print(f"\n[green]✓ Successfully pulled {pulled} snippets from cloud.[/green]")
         
         if pulled == 0 and errors == 0:
-            console.print("[yellow]No snippets found on server.[/yellow]")
+            if team_name:
+                console.print("[yellow]No snippets found on server for this team.[/yellow]")
+            else:
+                console.print("[yellow]No snippets found on server.[/yellow]")
             
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.group()
+def team():
+    """Team management commands."""
+    pass
+
+
+@team.command()
+@click.argument('name')
+def create(name):
+    """
+    Create a new team.
+    
+    \b
+    This command will:
+    1. Create a new team with the given name
+    2. Add you as the team creator and owner
+    
+    \b
+    You must be logged in (run 'snip auth login' first).
+    
+    \b
+    EXAMPLE:
+      snip team create dev-team
+    """
+    try:
+        from macolint.teams import create_team
+        
+        team = create_team(name)
+        if team:
+            console.print(f"[green]✓ Team '{name}' created successfully.[/green]")
+            console.print(f"[green]Team ID: {team.id}[/green]")
+        else:
+            console.print(f"[red]Failed to create team '{name}'.[/red]")
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@team.command()
+def list():
+    """
+    List all teams you are a member of.
+    
+    \b
+    You must be logged in (run 'snip auth login' first).
+    
+    \b
+    EXAMPLE:
+      snip team list
+    """
+    try:
+        from macolint.teams import list_user_teams
+        from rich.table import Table
+        
+        teams = list_user_teams()
+        
+        if not teams:
+            console.print("[yellow]You are not a member of any teams.[/yellow]")
+            return
+        
+        table = Table(title="Your Teams")
+        table.add_column("Name", style="cyan")
+        table.add_column("Created At", style="dim")
+        
+        for team in teams:
+            table.add_row(team.name, team.created_at.strftime("%Y-%m-%d %H:%M"))
+        
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@team.command()
+@click.argument('team_name')
+def members(team_name):
+    """
+    List members of a team.
+    
+    \b
+    You must be logged in and be a member of the team.
+    
+    \b
+    EXAMPLE:
+      snip team members dev-team
+    """
+    try:
+        from macolint.teams import get_team_by_name, list_team_members
+        from rich.table import Table
+        
+        team = get_team_by_name(team_name)
+        if team is None:
+            console.print(f"[red]Error: Team '{team_name}' not found or you are not a member.[/red]")
+            sys.exit(1)
+        
+        members_list = list_team_members(team.id)
+        
+        if not members_list:
+            console.print(f"[yellow]No members found for team '{team_name}'.[/yellow]")
+            return
+        
+        table = Table(title=f"Members of '{team_name}'")
+        table.add_column("User ID", style="cyan")
+        table.add_column("Role", style="yellow")
+        table.add_column("Joined At", style="dim")
+        
+        for member in members_list:
+            table.add_row(
+                member.user_id[:8] + "...",  # Show first 8 chars of UUID
+                member.role,
+                member.joined_at.strftime("%Y-%m-%d %H:%M")
+            )
+        
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@team.command()
+@click.argument('team_name')
+@click.argument('user_id')
+def add(team_name, user_id):
+    """
+    Add a user to a team.
+    
+    \b
+    You must be the team creator to add members.
+    The user_id should be the UUID of the user to add.
+    
+    \b
+    EXAMPLE:
+      snip team add dev-team 12345678-1234-1234-1234-123456789abc
+    """
+    try:
+        from macolint.teams import get_team_by_name, add_team_member_by_id
+        
+        team = get_team_by_name(team_name)
+        if team is None:
+            console.print(f"[red]Error: Team '{team_name}' not found or you are not a member.[/red]")
+            sys.exit(1)
+        
+        success = add_team_member_by_id(team.id, user_id)
+        if success:
+            console.print(f"[green]✓ User '{user_id}' added to team '{team_name}'.[/green]")
+        else:
+            console.print(f"[red]Failed to add user to team.[/red]")
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('snippet_path')
+@click.argument('team_name')
+def share(snippet_path, team_name):
+    """
+    Share a snippet with a team.
+    
+    \b
+    This command will:
+    1. Mark the snippet as shared in your local database
+    2. Prepare it for syncing to the team space
+    
+    \b
+    After sharing, run 'snip sync push --team TEAM_NAME' to upload to team space.
+    
+    \b
+    You must be logged in and be a member of the team.
+    
+    \b
+    EXAMPLE:
+      snip share my_snippet dev-team
+      snip share module1/snippet dev-team
+    """
+    try:
+        from macolint.sharing import share_snippet
+        import getpass
+        
+        passphrase = getpass.getpass("Enter passphrase to encrypt snippet: ")
+        if not passphrase:
+            console.print("[red]Error: Passphrase cannot be empty.[/red]")
+            sys.exit(1)
+        
+        success = share_snippet(snippet_path, team_name, passphrase)
+        if not success:
+            console.print(f"[red]Failed to share snippet.[/red]")
+            sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('snippet_path')
+@click.argument('team_name')
+def unshare(snippet_path, team_name):
+    """
+    Unshare a snippet from a team.
+    
+    \b
+    This command will:
+    1. Remove the snippet from the team space in Supabase
+    2. Update the local sharing status
+    
+    \b
+    You must be logged in and be a member of the team.
+    
+    \b
+    EXAMPLE:
+      snip unshare my_snippet dev-team
+      snip unshare module1/snippet dev-team
+    """
+    try:
+        from macolint.sharing import unshare_snippet
+        
+        success = unshare_snippet(snippet_path, team_name)
+        if not success:
+            console.print(f"[red]Failed to unshare snippet.[/red]")
+            sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)

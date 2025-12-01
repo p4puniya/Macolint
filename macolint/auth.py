@@ -431,9 +431,13 @@ def signup() -> bool:
         return False
 
 
-def logout() -> bool:
+def logout(clear_team_snippets: bool = True) -> bool:
     """
     Log out the current user by clearing the session.
+    
+    Args:
+        clear_team_snippets: If True, removes all team-shared snippets from local database.
+                           This is recommended for security/privacy when logging out.
     
     Returns:
         True if logout successful, False otherwise
@@ -443,8 +447,29 @@ def logout() -> bool:
         console.print("[yellow]No active session found.[/yellow]")
         return False
     
+    # Clear team-shared snippets if requested
+    if clear_team_snippets:
+        from macolint.database import Database
+        db = Database()
+        shared_snippets = db.get_shared_snippets()
+        
+        if shared_snippets:
+            removed_count = 0
+            for snippet_path in shared_snippets:
+                try:
+                    if db.delete_snippet(snippet_path):
+                        removed_count += 1
+                except Exception:
+                    # If deletion fails, continue with others
+                    pass
+            
+            if removed_count > 0:
+                console.print(f"[yellow]Removed {removed_count} team-shared snippet(s) from local database.[/yellow]")
+    
     delete_session()
     console.print("[green]✓ Successfully logged out[/green]")
+    if clear_team_snippets:
+        console.print("[dim]Team-shared snippets have been removed. You can pull them again after logging back in.[/dim]")
     return True
 
 

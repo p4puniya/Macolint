@@ -106,3 +106,127 @@ def is_configured() -> bool:
     """
     return SUPABASE_URL is not None and SUPABASE_ANON_KEY is not None
 
+
+def get_authenticated_client() -> Client:
+    """
+    Get an authenticated Supabase client with JWT token properly set.
+    
+    This function ensures that:
+    1. The user is authenticated (has a valid session)
+    2. The session is set on the Supabase client
+    3. The Authorization header is manually set on the PostgREST client
+       (because set_session() doesn't always propagate JWT to PostgREST)
+    
+    Returns:
+        Authenticated Supabase client instance
+    
+    Raises:
+        RuntimeError: If not authenticated or session is invalid
+    """
+    from macolint.storage import load_session
+    from macolint.auth import is_authenticated
+    
+    if not is_authenticated():
+        raise RuntimeError("Not logged in. Run 'snip auth login' first.")
+    
+    session = load_session()
+    if not session:
+        raise RuntimeError("Session not found. Please log in again.")
+    
+    access_token = session.get("access_token")
+    refresh_token = session.get("refresh_token", "")
+    
+    if not access_token:
+        raise RuntimeError("No access token found in session. Please log in again.")
+    
+    # CRITICAL: Create a NEW client instance for each authenticated request
+    # Reusing the shared client can cause session state issues
+    # Creating a fresh client ensures the session is properly initialized
+    client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    
+    # Set session on auth client
+    # The Supabase Python client's set_session() method signature:
+    # set_session(access_token: str, refresh_token: str) -> AuthResponse
+    try:
+        auth_response = client.auth.set_session(access_token, refresh_token)
+        # Verify the session was set correctly by getting the current user
+        # This ensures the token is valid and the session is active
+        try:
+            user_response = client.auth.get_user()
+            if not user_response or not user_response.user:
+                raise RuntimeError("Session is invalid. Please log in again.")
+        except Exception as e:
+            # If get_user fails, the session might still be valid for RLS
+            # But log a warning
+            import warnings
+            warnings.warn(f"Could not verify session with get_user(): {e}. Continuing anyway.")
+    except Exception as e:
+        raise RuntimeError(f"Failed to set session: {e}. Please log in again with 'snip auth login'.")
+    
+    # CRITICAL FIX: Manually set Authorization header on PostgREST client
+    # The Supabase Python client's set_session() doesn't always properly
+    # sync the JWT token to PostgREST client for INSERT/UPDATE/DELETE operations
+    # This ensures the JWT is always included in database requests
+    
+    # CRITICAL FIX: Manually set Authorization header on PostgREST client
+    # The Supabase Python client's set_session() doesn't always properly
+    # sync the JWT token to PostgREST client for INSERT/UPDATE/DELETE operations
+    # This ensures the JWT is always included in database requests
+    
+    # Set headers on the postgrest session (httpx.Client)
+    # This is the most reliable way to ensure headers are sent with requests
+    if hasattr(client, 'postgrest'):
+        # Set on the httpx.Client session - this is the actual HTTP client that makes requests
+        if hasattr(client.postgrest, 'session') and hasattr(client.postgrest.session, 'headers'):
+            # Use lowercase 'authorization' as httpx normalizes headers
+            client.postgrest.session.headers['authorization'] = f'Bearer {access_token}'
+            client.postgrest.session.headers['Authorization'] = f'Bearer {access_token}'  # Also set uppercase for compatibility
+            client.postgrest.session.headers['apikey'] = SUPABASE_ANON_KEY
+        
+        # Also set on postgrest client's headers (if it exists)
+        if hasattr(client.postgrest, 'headers'):
+            client.postgrest.headers['authorization'] = f'Bearer {access_token}'
+            client.postgrest.headers['Authorization'] = f'Bearer {access_token}'  # Also set uppercase
+            client.postgrest.headers['apikey'] = SUPABASE_ANON_KEY
+    
+    # Store access_token for debugging/verification
+    client._macolint_access_token = access_token
+    
+    return client
+
+
+def ensure_auth_headers(client: Client) -> None:
+    """
+    Ensure Authorization headers are set on the client right before a request.
+    
+    This should be called right before making database operations to ensure
+    the JWT token is included in the request headers.
+    
+    Args:
+        client: Supabase client instance
+    """
+    from macolint.storage import load_session
+    
+    session = load_session()
+    if not session:
+        return
+    
+    access_token = session.get("access_token")
+    if not access_token:
+        return
+    
+    # Set headers on the postgrest session (httpx.Client)
+    if hasattr(client, 'postgrest'):
+        # Set on the httpx.Client session - this is the actual HTTP client that makes requests
+        if hasattr(client.postgrest, 'session') and hasattr(client.postgrest.session, 'headers'):
+            # Use lowercase 'authorization' as httpx normalizes headers
+            client.postgrest.session.headers['authorization'] = f'Bearer {access_token}'
+            client.postgrest.session.headers['Authorization'] = f'Bearer {access_token}'  # Also set uppercase for compatibility
+            client.postgrest.session.headers['apikey'] = SUPABASE_ANON_KEY
+        
+        # Also set on postgrest client's headers (if it exists)
+        if hasattr(client.postgrest, 'headers'):
+            client.postgrest.headers['authorization'] = f'Bearer {access_token}'
+            client.postgrest.headers['Authorization'] = f'Bearer {access_token}'  # Also set uppercase
+            client.postgrest.headers['apikey'] = SUPABASE_ANON_KEY
+

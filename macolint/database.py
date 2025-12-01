@@ -61,6 +61,7 @@ class Database:
                     module_id INTEGER NULL,
                     entity_type TEXT NOT NULL DEFAULT 'snippet',
                     content_encrypted BLOB NOT NULL,
+                    is_shared INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -77,6 +78,13 @@ class Database:
             cursor.execute("PRAGMA table_info(snippets)")
             cols = [row[1] for row in cursor.fetchall()]
             needs_migration = "module_id" not in cols or "entity_type" not in cols
+            needs_is_shared = "is_shared" not in cols
+
+            # Add is_shared column if missing
+            if needs_is_shared:
+                cursor.execute(
+                    "ALTER TABLE snippets ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0"
+                )
 
             if needs_migration:
                 cursor.execute(
@@ -87,10 +95,11 @@ class Database:
                         module_id INTEGER NULL,
                         entity_type TEXT NOT NULL DEFAULT 'snippet',
                         content_encrypted BLOB NOT NULL,
+                        is_shared INTEGER NOT NULL DEFAULT 0,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     )
-                    """
+                """
                 )
                 cursor.execute(
                     """
@@ -99,23 +108,46 @@ class Database:
                     """
                 )
                 # Migrate existing data; old table uses name as full identifier
-                cursor.execute(
-                    """
-                    INSERT INTO snippets_new (
-                        id, name, module_id, entity_type,
-                        content_encrypted, created_at, updated_at
+                # Check if is_shared exists in old table
+                has_is_shared = "is_shared" in cols
+                if has_is_shared:
+                    cursor.execute(
+                        """
+                        INSERT INTO snippets_new (
+                            id, name, module_id, entity_type,
+                            content_encrypted, is_shared, created_at, updated_at
+                        )
+                        SELECT
+                            id,
+                            name,
+                            NULL as module_id,
+                            'snippet' as entity_type,
+                            content_encrypted,
+                            is_shared,
+                            created_at,
+                            updated_at
+                        FROM snippets
+                        """
                     )
-                    SELECT
-                        id,
-                        name,
-                        NULL as module_id,
-                        'snippet' as entity_type,
-                        content_encrypted,
-                        created_at,
-                        updated_at
-                    FROM snippets
-                    """
-                )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO snippets_new (
+                            id, name, module_id, entity_type,
+                            content_encrypted, is_shared, created_at, updated_at
+                        )
+                        SELECT
+                            id,
+                            name,
+                            NULL as module_id,
+                            'snippet' as entity_type,
+                            content_encrypted,
+                            0 as is_shared,
+                            created_at,
+                            updated_at
+                        FROM snippets
+                        """
+                    )
                 cursor.execute("DROP TABLE snippets")
                 cursor.execute("ALTER TABLE snippets_new RENAME TO snippets")
         
@@ -262,7 +294,7 @@ class Database:
 
     def _get_snippet_row_by_path(
         self, full_path: str
-    ) -> Optional[Tuple[int, str, bytes, str, str]]:
+    ) -> Optional[Tuple[int, str, bytes, int, str, str]]:
         """Internal helper to fetch a snippet row by hierarchical path."""
         module_path, snippet_name = self._split_path(full_path)
         module = self._resolve_module_path(module_path, create=False)
@@ -273,7 +305,7 @@ class Database:
         if module is None:
             cursor.execute(
                 """
-                SELECT id, name, content_encrypted, created_at, updated_at
+                SELECT id, name, content_encrypted, is_shared, created_at, updated_at
                 FROM snippets
                 WHERE name = ? AND module_id IS NULL
                 """,
@@ -282,7 +314,7 @@ class Database:
         else:
             cursor.execute(
                 """
-                SELECT id, name, content_encrypted, created_at, updated_at
+                SELECT id, name, content_encrypted, is_shared, created_at, updated_at
                 FROM snippets
                 WHERE name = ? AND module_id = ?
                 """,
@@ -314,9 +346,9 @@ class Database:
                 """
                 INSERT INTO snippets (
                     name, module_id, entity_type,
-                    content_encrypted, created_at, updated_at
+                    content_encrypted, is_shared, created_at, updated_at
                 )
-                VALUES (?, ?, 'snippet', ?, ?, ?)
+                VALUES (?, ?, 'snippet', ?, 0, ?, ?)
                 """,
                 (snippet_name, module_id, encrypted_content, now, now),
             )
@@ -353,8 +385,9 @@ class Database:
         if row is None:
             return None
         encrypted_content = row[2]
+        is_shared = bool(row[3]) if len(row) > 3 else False
         content = self._decrypt_content(encrypted_content)
-        return Snippet.from_row(row, content)
+        return Snippet.from_row(row, content, is_shared=is_shared)
     
     def update_snippet(self, full_path: str, content: str) -> bool:
         """Update an existing snippet by hierarchical path."""
@@ -429,7 +462,7 @@ class Database:
 
     def _build_snippet_full_path_rows(
         self,
-        rows: List[Tuple[int, str, Optional[int], bytes, str, str]],
+        rows: List[Tuple[int, str, Optional[int], bytes, int, str, str]],
     ) -> List[str]:
         """Convert snippet rows with module_id into full path strings."""
         if not rows:
@@ -562,7 +595,7 @@ class Database:
             # Fetch all, then filter in Python on full path
             cursor.execute(
                 """
-                SELECT id, name, module_id, content_encrypted, created_at, updated_at
+                SELECT id, name, module_id, content_encrypted, is_shared, created_at, updated_at
                 FROM snippets
                 ORDER BY name
                 """
@@ -575,7 +608,7 @@ class Database:
         else:
             cursor.execute(
                 """
-                SELECT id, name, module_id, content_encrypted, created_at, updated_at
+                SELECT id, name, module_id, content_encrypted, is_shared, created_at, updated_at
                 FROM snippets
                 ORDER BY name
                 """
@@ -841,5 +874,88 @@ class Database:
             # Name conflict at new location
             conn.close()
             return False
+
+    # ------------------------------------------------------------------
+    # Sharing operations
+    # ------------------------------------------------------------------
+
+    def mark_snippet_shared(self, full_path: str, is_shared: bool) -> bool:
+        """
+        Mark a snippet as shared or unshared.
+        
+        Args:
+            full_path: Full path to the snippet
+            is_shared: True to mark as shared, False to unshare
+        
+        Returns:
+            True if successful, False if snippet not found
+        """
+        module_path, snippet_name = self._split_path(full_path)
+        module = self._resolve_module_path(module_path, create=False)
+        module_id = module.id if module is not None else None
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if module_id is None:
+            cursor.execute(
+                """
+                UPDATE snippets
+                SET is_shared = ?
+                WHERE name = ? AND module_id IS NULL
+                """,
+                (1 if is_shared else 0, snippet_name),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE snippets
+                SET is_shared = ?
+                WHERE name = ? AND module_id = ?
+                """,
+                (1 if is_shared else 0, snippet_name, module_id),
+            )
+
+        updated = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return updated
+
+    def get_shared_snippets(self) -> List[str]:
+        """
+        Get list of all shared snippet full paths.
+        
+        Returns:
+            List of full paths for shared snippets
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT id, name, module_id, content_encrypted, is_shared, created_at, updated_at
+            FROM snippets
+            WHERE is_shared = 1
+            ORDER BY name
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return self._build_snippet_full_path_rows(rows)
+
+    def is_snippet_shared(self, full_path: str) -> bool:
+        """
+        Check if a snippet is marked as shared.
+        
+        Args:
+            full_path: Full path to the snippet
+        
+        Returns:
+            True if shared, False if not shared or not found
+        """
+        snippet = self.get_snippet(full_path)
+        if snippet is None:
+            return False
+        return snippet.is_shared
 
 
