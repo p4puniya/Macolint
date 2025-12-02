@@ -1162,9 +1162,40 @@ def list(keyword, module_path):
         sys.exit(1)
 
 
+def _auto_detect_shell() -> str:
+    """
+    Best-effort detection of the *current* interactive shell.
+    This is more accurate than relying solely on $SHELL (the login shell),
+    which can be bash even when you are currently running zsh.
+    """
+    # Prefer explicit shell-specific environment variables first
+    zsh_env = os.environ.get("ZSH_VERSION")
+    bash_env = os.environ.get("BASH_VERSION")
+    fish_env = os.environ.get("FISH_VERSION")
+
+    if zsh_env:
+        return "zsh"
+    if bash_env:
+        return "bash"
+    if fish_env:
+        return "fish"
+
+    # Fallback to $SHELL login shell
+    shell_name = os.environ.get("SHELL", "").split("/")[-1]
+    if shell_name in ("bash", "zsh", "fish"):
+        return shell_name
+
+    # Last resort: assume bash
+    return "bash"
+
+
 @cli.command()
-@click.option('--shell', type=click.Choice(['bash', 'zsh', 'fish', 'auto'], case_sensitive=False), 
-              default='auto', help='Shell to set up (default: auto-detect)')
+@click.option(
+    '--shell',
+    type=click.Choice(['bash', 'zsh', 'fish', 'auto'], case_sensitive=False),
+    default='auto',
+    help='Shell to set up (default: auto-detect)',
+)
 @click.option('--fix-path', is_flag=True, help='Also fix PATH if snip command is not found')
 @click.option('--force', is_flag=True, help='Force update even if wrapper is already installed')
 def setup(shell, fix_path, force):
@@ -1246,15 +1277,7 @@ def setup(shell, fix_path, force):
                 if fix_path:
                     # Auto-detect shell for PATH fix
                     if shell == 'auto':
-                        shell_name = os.environ.get('SHELL', '').split('/')[-1]
-                        if shell_name in ['bash', 'zsh', 'fish']:
-                            shell = shell_name
-                        elif 'zsh' in shell_name.lower():
-                            shell = 'zsh'
-                        elif 'bash' in shell_name.lower():
-                            shell = 'bash'
-                        elif 'fish' in shell_name.lower():
-                            shell = 'fish'
+                        shell = _auto_detect_shell()
                     
                     if shell in ['bash', 'zsh', 'fish']:
                         _fix_path_in_shell_config(shell, scripts_path)
@@ -1273,21 +1296,11 @@ def setup(shell, fix_path, force):
             
         # Auto-detect shell if not specified
         if shell == 'auto':
-            shell_name = os.environ.get('SHELL', '').split('/')[-1]
-            if shell_name in ['bash', 'zsh', 'fish']:
-                shell = shell_name
-            else:
-                # Try to detect from common shells
-                if 'zsh' in shell_name.lower():
-                    shell = 'zsh'
-                elif 'bash' in shell_name.lower():
-                    shell = 'bash'
-                elif 'fish' in shell_name.lower():
-                    shell = 'fish'
-                else:
-                    console.print("[yellow]Could not auto-detect shell. Please specify with --shell option.[/yellow]")
-                    console.print("[yellow]Supported shells: bash, zsh, fish[/yellow]")
-                    return
+            shell = _auto_detect_shell()
+            if shell not in ['bash', 'zsh', 'fish']:
+                console.print("[yellow]Could not auto-detect shell. Please specify with --shell option.[/yellow]")
+                console.print("[yellow]Supported shells: bash, zsh, fish[/yellow]")
+                return
         
         # Get wrapper code for the shell
         wrapper_code = _get_wrapper_code(shell)
@@ -1366,9 +1379,10 @@ def _get_wrapper_code(shell: str) -> str:
     wrappers = {
         'bash': f'''# Macolint shell wrapper (Bash) - {version_str}
 snip() {{
-  # Find the actual snip command, using python3 -m macolint.cli as fallback
+  # Find the actual snip command, using python3 -m macolint.cli as fallback.
+  # Use "type -P" to ignore shell functions/aliases so we don't recurse.
   local snip_cmd
-  snip_cmd=$(command -v snip 2>/dev/null) || snip_cmd="python3 -m macolint.cli"
+  snip_cmd=$(type -P snip 2>/dev/null) || snip_cmd="python3 -m macolint.cli"
   
   # If this is 'snip get' (with or without name), use the wrapper behavior
   if [ "${{1}}" = "get" ]; then

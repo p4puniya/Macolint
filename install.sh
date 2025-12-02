@@ -51,17 +51,27 @@ detect_os() {
     print_info "Detected OS: $OS"
 }
 
-# Detect shell
+# Detect shell (prefer the *current* interactive shell over login shell)
 detect_shell() {
-    SHELL_NAME=$(basename "$SHELL" 2>/dev/null || echo "bash")
-    if [[ "$SHELL_NAME" == "zsh" ]]; then
+    # Prefer explicit shell-specific environment variables first
+    if [[ -n "$ZSH_VERSION" ]]; then
         DETECTED_SHELL="zsh"
-    elif [[ "$SHELL_NAME" == "bash" ]]; then
+    elif [[ -n "$BASH_VERSION" ]]; then
         DETECTED_SHELL="bash"
-    elif [[ "$SHELL_NAME" == "fish" ]]; then
+    elif [[ -n "$FISH_VERSION" ]]; then
         DETECTED_SHELL="fish"
     else
-        DETECTED_SHELL="bash"  # Default fallback
+        # Fallback to login shell from $SHELL
+        SHELL_NAME=$(basename "$SHELL" 2>/dev/null || echo "")
+        if [[ "$SHELL_NAME" == "zsh" ]]; then
+            DETECTED_SHELL="zsh"
+        elif [[ "$SHELL_NAME" == "bash" ]]; then
+            DETECTED_SHELL="bash"
+        elif [[ "$SHELL_NAME" == "fish" ]]; then
+            DETECTED_SHELL="fish"
+        else
+            DETECTED_SHELL="bash"  # Sensible default
+        fi
     fi
     print_info "Detected shell: $DETECTED_SHELL"
 }
@@ -199,8 +209,15 @@ setup_macolint() {
         print_warning "snip command not in PATH, using Python module syntax"
     fi
     
-    # Run setup with --fix-path flag
-    if $SNIP_CMD setup --fix-path 2>&1; then
+    # Run setup with --fix-path flag, telling it which shell we detected.
+    # This avoids situations where the login shell is bash but you're actually
+    # running zsh (or vice‑versa).
+    SETUP_SHELL_FLAG=""
+    if [[ "$DETECTED_SHELL" == "bash" || "$DETECTED_SHELL" == "zsh" || "$DETECTED_SHELL" == "fish" ]]; then
+        SETUP_SHELL_FLAG="--shell $DETECTED_SHELL"
+    fi
+
+    if $SNIP_CMD setup --fix-path $SETUP_SHELL_FLAG 2>&1; then
         print_success "Shell wrapper and PATH configured"
     else
         print_warning "Setup encountered some issues, but installation may still work"

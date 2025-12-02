@@ -34,27 +34,25 @@ def login() -> bool:
         console.print(f"[red]Error: {e}[/red]")
         return False
     
-    # Use Supabase's PKCE flow for email authentication
-    # This is the recommended way for CLI tools to authenticate with Supabase
+    # Use Supabase's PKCE flow for email authentication.
+    # For now we only expose the Email/Password flow in the UI.
+    # The Magic Link flow is kept below but not offered to users yet.
     console.print(
         Panel(
-            "[bold]Authentication Options:[/bold]\n\n"
-            "[yellow]Option 1: Magic Link (Recommended)[/yellow]\n"
-            "1. Enter your email below\n"
-            "2. Check your email for a magic link\n"
-            "3. Click the link to sign in\n"
-            "4. Copy the access token from the redirect URL\n\n"
-            "[yellow]Option 2: Email/Password[/yellow]\n"
+            "[bold]Authentication[/bold]\n\n"
+            "[yellow]Email/Password login[/yellow]\n"
             "1. Enter your email and password below\n"
-            "2. Get your access token from the response\n\n"
-            "[dim]Note: If you haven't signed up yet, use magic link to create an account.[/dim]",
+            "2. We will authenticate with Supabase and store your session locally\n\n"
+            "[dim]Note: Magic link login exists in the codebase but is currently disabled in the UI.[/dim]",
             title="Authentication",
-            border_style="cyan"
+            border_style="cyan",
         )
     )
     
-    # Ask user which method they prefer
-    method = console.input("\n[bold cyan]Choose method (1 for Magic Link, 2 for Email/Password) [1]: [/bold cyan]").strip() or "1"
+    # For now we only allow email/password (method \"2\").
+    # Previous prompt for magic link vs password is kept for later:
+    # method = console.input(\"\\n[bold cyan]Choose method (1 for Magic Link, 2 for Email/Password) [1]: [/bold cyan]\").strip() or \"1\"
+    method = "2"
     
     if method == "1":
         # Magic Link flow

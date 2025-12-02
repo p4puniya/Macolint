@@ -135,7 +135,7 @@ def prompt_snippet_content(existing_content: Optional[str] = None) -> Optional[s
         console.print("[cyan]Edit the snippet. Press Ctrl+D to save, Esc to cancel.[/cyan]")
         console.print("[dim]Tip: For multi-line snippets, use Ctrl+D when done.[/dim]")
     else:
-        console.print("[cyan]Enter the snippet here. Press Enter to save (single line) or Ctrl+D for multi-line, Esc to cancel.[/cyan]")
+        console.print("[cyan]Enter the snippet here. Press Enter to save (single line), Esc to cancel.[/cyan]")
     
     try:
         kb = KeyBindings()
