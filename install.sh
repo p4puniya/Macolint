@@ -190,6 +190,9 @@ install_macolint() {
     if ! $PIP_CMD install "$INSTALL_URL" 2>&1; then
         print_error "Installation failed"
         print_info "Try running manually: $PIP_CMD install $INSTALL_URL"
+        print_info "If you see 'Could not find an activated virtualenv (required).' then your pip is configured to require a virtualenv."
+        print_info "Either activate a virtualenv before installing, or override it for this install with:"
+        printf "  ${GREEN}PIP_REQUIRE_VIRTUALENV=0 $PIP_CMD install $INSTALL_URL${NC}\n"
         exit 1
     fi
     
