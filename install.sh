@@ -178,6 +178,140 @@ check_pip() {
     print_success "Found $PIP_CMD"
 }
 
+# Determine absolute Python binary path for launcher
+get_python_bin_path() {
+    PYTHON_BIN_PATH=$(command -v "$PYTHON_CMD" 2>/dev/null || echo "$PYTHON_CMD")
+}
+
+# Choose a system-wide launcher directory for snip (brew-like behavior)
+# Prefer /usr/local/bin, then /opt/local/bin, then /opt/macolint/bin
+choose_launcher_dir() {
+    local candidates=(
+        "/usr/local/bin"
+        "/opt/local/bin"
+        "/opt/macolint/bin"
+    )
+
+    for dir in "${candidates[@]}"; do
+        # If directory exists and is writable, use it
+        if [[ -d "$dir" && -w "$dir" ]]; then
+            echo "$dir"
+            return 0
+        fi
+
+        # If it doesn't exist, but parent is writable, try to create it
+        if [[ ! -e "$dir" ]]; then
+            local parent
+            parent="$(dirname "$dir")"
+            if [[ -w "$parent" ]]; then
+                mkdir -p "$dir" 2>/dev/null || true
+                if [[ -d "$dir" && -w "$dir" ]]; then
+                    echo "$dir"
+                    return 0
+                fi
+            fi
+        fi
+    done
+
+    # No suitable directory found
+    echo ""
+    return 1
+}
+
+# Create a simple launcher script that always uses the detected Python
+# This avoids depending on where pip dropped the console script.
+create_system_launcher() {
+    LAUNCHER_DIR=""
+    LAUNCHER_PATH=""
+
+    get_python_bin_path
+
+    local chosen_dir
+    chosen_dir="$(choose_launcher_dir)"
+
+    if [[ -z "$chosen_dir" ]]; then
+        print_warning "Could not create a system-wide 'snip' launcher automatically."
+        print_info "You can create one manually (may require sudo). For example:"
+        printf "  ${GREEN}sudo sh -c 'printf \"#!/bin/sh\nexec %s -m macolint.cli \\\"\\\$@\\\"\\n\" > /usr/local/bin/snip && chmod +x /usr/local/bin/snip'${NC}\n" "$PYTHON_BIN_PATH"
+        return 1
+    fi
+
+    LAUNCHER_DIR="$chosen_dir"
+    LAUNCHER_PATH="${LAUNCHER_DIR}/snip"
+
+    cat > "$LAUNCHER_PATH" <<EOF
+#!/bin/sh
+# Macolint system-wide launcher
+exec "$PYTHON_BIN_PATH" -m macolint.cli "\$@"
+EOF
+
+    chmod +x "$LAUNCHER_PATH" || {
+        print_warning "Created launcher at $LAUNCHER_PATH but could not mark it executable."
+        return 1
+    }
+
+    print_success "Created system-wide 'snip' launcher at: $LAUNCHER_PATH"
+    return 0
+}
+
+# Ensure launcher directory is visible to bash/zsh shells via PATH
+ensure_launcher_on_path() {
+    # Only manage PATH for bash/zsh, as requested
+    if [[ "$DETECTED_SHELL" != "bash" && "$DETECTED_SHELL" != "zsh" ]]; then
+        return 0
+    fi
+
+    # If launcher dir is empty or already on PATH, nothing to do
+    if [[ -z "$LAUNCHER_DIR" ]]; then
+        return 0
+    fi
+
+    case ":$PATH:" in
+        *":$LAUNCHER_DIR:"*)
+            # Already on PATH
+            return 0
+            ;;
+    esac
+
+    # If using the standard /usr/local/bin, most systems already have it on PATH.
+    # If they don't, we still avoid modifying PATH silently here.
+    if [[ "$LAUNCHER_DIR" == "/usr/local/bin" ]]; then
+        print_warning "'snip' launcher is in /usr/local/bin, but it is not currently on PATH."
+        print_info "Consider adding this to your shell config if needed:"
+        printf "  ${GREEN}export PATH=\"/usr/local/bin:\$PATH\"${NC}\n"
+        return 0
+    fi
+
+    local config_file
+    if [[ "$DETECTED_SHELL" == "bash" ]]; then
+        config_file="$HOME/.bashrc"
+    else
+        config_file="$HOME/.zshrc"
+    fi
+
+    local marker="# Macolint PATH setup"
+    local export_line="export PATH=\"${LAUNCHER_DIR}:\$PATH\""
+
+    if [[ -f "$config_file" ]]; then
+        if grep -q "$marker" "$config_file" 2>/dev/null || grep -q "$LAUNCHER_DIR" "$config_file" 2>/dev/null; then
+            print_info "PATH for Macolint already configured in $config_file"
+            return 0
+        fi
+    fi
+
+    mkdir -p "$(dirname "$config_file")" 2>/dev/null || true
+
+    {
+        echo ""
+        echo "$marker"
+        echo "$export_line"
+    } >> "$config_file"
+
+    print_success "Added Macolint launcher directory to PATH in $config_file"
+    print_info "Reload your shell config for changes to take effect:"
+    printf "  ${GREEN}source %s${NC}\n" "$config_file"
+}
+
 # Install Macolint
 install_macolint() {
     print_info "Installing Macolint from GitHub..."
@@ -202,9 +336,14 @@ install_macolint() {
 # Setup shell wrapper and PATH
 setup_macolint() {
     print_info "Configuring shell wrapper and PATH..."
-    
-    # Check if snip command is available
-    if command_exists snip; then
+ 
+    # If we created a launcher, ensure its directory is discoverable for bash/zsh
+    ensure_launcher_on_path
+
+    # Prefer the system-wide launcher if we created one
+    if [[ -n "$LAUNCHER_PATH" && -x "$LAUNCHER_PATH" ]]; then
+        SNIP_CMD="$LAUNCHER_PATH"
+    elif command_exists snip; then
         SNIP_CMD="snip"
     else
         # Use Python module syntax as fallback
@@ -270,6 +409,9 @@ main() {
     
     # Install Macolint
     install_macolint
+
+    # Create system-wide snip launcher (brew-like behavior)
+    create_system_launcher
     
     # Setup shell wrapper
     setup_macolint

@@ -2269,26 +2269,35 @@ def doctor():
     console.print("[bold]Macolint Doctor[/bold]")
     console.print("")
     
-    # Check if snip is in PATH
+    # Check if snip is in PATH and where a launcher might live
     snip_path = shutil.which('snip')
     scripts_path = _get_python_scripts_path()
     use_module_syntax = False
+
+    # Also look for a system-wide launcher in common locations (brew-like)
+    launcher_candidates = [
+        Path("/usr/local/bin/snip"),
+        Path("/opt/local/bin/snip"),
+        Path("/opt/macolint/bin/snip"),
+    ]
+    launcher_path = next((p for p in launcher_candidates if p.exists()), None)
     
     if snip_path:
-        console.print(f"[green]✓ snip command found: {snip_path}[/green]")
+        console.print(f"[green]✓ snip command found on PATH: {snip_path}[/green]")
         command_prefix = "snip"
     else:
         console.print("[red]✗ snip command not found in PATH[/red]")
-        if scripts_path:
-            console.print(f"[yellow]  Found snip at: {scripts_path / 'snip'}[/yellow]")
-            console.print(f"[yellow]  But {scripts_path} is not in PATH[/yellow]")
-            use_module_syntax = True
-            command_prefix = "python3 -m macolint.cli"
-        else:
-            console.print("[red]  Could not locate snip command[/red]")
-            console.print("[yellow]  Try reinstalling: pip3 install -e .[/yellow]")
-            command_prefix = "python3 -m macolint.cli"
-            use_module_syntax = True
+        if launcher_path:
+            console.print(f"[yellow]  Found system launcher at: {launcher_path}[/yellow]")
+            console.print(f"[yellow]  But its directory ({launcher_path.parent}) is not in PATH[/yellow]")
+        if scripts_path and (scripts_path / "snip").exists():
+            console.print(f"[yellow]  Found Python scripts snip at: {scripts_path / 'snip'}[/yellow]")
+            console.print(f"[yellow]  But {scripts_path} may not be in PATH[/yellow]")
+        if not launcher_path and not (scripts_path and (scripts_path / "snip").exists()):
+            console.print("[red]  Could not locate any 'snip' launcher or script[/red]")
+            console.print("[yellow]  Try reinstalling: pip3 install git+https://github.com/p4puniya/Macolint.git[/yellow]")
+        command_prefix = "python3 -m macolint.cli"
+        use_module_syntax = True
     
     console.print("")
     
@@ -2333,11 +2342,11 @@ def doctor():
         console.print("[bold]Recommended Actions:[/bold]")
         console.print("")
         
-        if not snip_path and scripts_path:
-            console.print("[cyan]1. Fix PATH and set up shell wrapper:[/cyan]")
+        if not snip_path:
+            console.print("[cyan]1. Ensure a system-wide 'snip' launcher is available and on PATH:[/cyan]")
             console.print(f"[cyan]   {command_prefix} setup --fix-path[/cyan]")
             console.print("")
-            console.print("[cyan]   Then reload your shell:[/cyan]")
+            console.print("[cyan]   Then reload your shell (bash/zsh):[/cyan]")
             if shell == 'zsh':
                 console.print("[cyan]   source ~/.zshrc[/cyan]")
             elif shell == 'bash':
