@@ -1002,7 +1002,8 @@ def rename(old_path, new_path, is_module):
                 console.print("[cyan]Enter new module path (or just new name to rename in place):[/cyan]")
             else:
                 console.print("[cyan]Enter new snippet path (or just new name to rename in place):[/cyan]")
-            new_path = prompt_snippet_name_simple([])  # Allow free-form input
+            # new_path = prompt_snippet_name_simple([])  # Allow free-form input
+            new_path = click.prompt("> ", type=str).strip() # Allow free-form input
             if not new_path:
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
